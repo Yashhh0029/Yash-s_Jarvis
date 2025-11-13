@@ -1,225 +1,228 @@
 # core/command_handler.py
+
 import os
 import webbrowser
 import datetime
 import random
 import psutil
+import pyautogui
+import subprocess
 
 from core.speech_engine import speak, jarvis_fx
 from core.conversation_core import JarvisConversation
 from core.memory_engine import JarvisMemory
 from core.emotion_reflection import JarvisEmotionReflection
 
-# Initialize core modules
 memory = JarvisMemory()
 reflection = JarvisEmotionReflection()
 
 
 class JarvisCommandHandler:
-    """Cinematic Jarvis — AI brain for all commands, mood logic, and contextual responses."""
+    """JARVIS Brain — handles commands, responses, emotions & memory."""
 
     def __init__(self):
         print("🧠 Jarvis Command Handler Ready")
-        self.name = "Jarvis"
         self.user = "Yash"
         self.conversation = JarvisConversation()
 
-    # ----------------------------------------------------------
+    # =====================================================================
+    # 🎯 MAIN PROCESSING FUNCTION
+    # =====================================================================
     def process(self, command):
-        """Main logic — interpret and respond to user commands."""
         command = command.lower().strip()
-        print(f"🎯 Command received: {command}")
+        print(f"🎤 Processing Command: {command}")
 
-        if not command:
-            return
-
-        # ==========================
+        # ============================================================
         # GREETINGS
-        # ==========================
-        if any(word in command for word in ["hello", "hi", "hey", "good morning", "good evening"]):
-            responses = [
-                f"Hey {self.user}, nice to hear your voice again.",
-                f"Hello {self.user}, how are you feeling today?",
-                f"Hey there, {self.user}. Systems are calm and listening."
-            ]
-            speak(random.choice(responses), mood="happy")
+        # ============================================================
+        if any(x in command for x in ["hello", "hi", "hey"]):
+            speak(random.choice([
+                f"Hello {self.user}, ready when you are.",
+                f"Hey {self.user}, I’m here.",
+                f"Hi {self.user}, systems are steady."
+            ]), mood="happy")
             return
 
-        # ==========================
+        # ============================================================
         # TIME & DATE
-        # ==========================
-        elif "time" in command:
+        # ============================================================
+        if "time" in command:
             now = datetime.datetime.now().strftime("%I:%M %p")
-            speak(f"It’s {now}, {self.user}.", mood="neutral")
+            speak(f"It’s {now}, {self.user}.")
             return
 
-        elif "date" in command:
+        if "date" in command:
             today = datetime.date.today().strftime("%A, %B %d, %Y")
-            speak(f"Today is {today}.", mood="neutral")
+            speak(f"Today is {today}.")
             return
 
-        # ==========================
+        # ============================================================
         # BATTERY STATUS
-        # ==========================
-        elif "battery" in command:
+        # ============================================================
+        if "battery" in command:
             try:
                 battery = psutil.sensors_battery()
                 if battery:
-                    percent = battery.percent
-                    plugged = "charging" if battery.power_plugged else "on battery"
-                    speak(f"Battery is at {percent} percent and currently {plugged}.", mood="serious")
+                    speak(
+                        f"Battery is at {battery.percent} percent "
+                        f"and currently {'charging' if battery.power_plugged else 'on battery'}.",
+                        mood="neutral"
+                    )
                 else:
-                    speak("I couldn’t access the battery information right now.", mood="alert")
-            except Exception:
-                speak("Something went wrong while checking the battery.", mood="alert")
+                    speak("I can’t read battery information right now.")
+            except:
+                speak("Battery check failed.", mood="alert")
             return
 
-        # ==========================
-        # OPEN WEBSITES & APPS
-        # ==========================
-        elif "open youtube" in command:
-            speak("On it, Yash. Launching YouTube.", mood="happy")
+        # ============================================================
+        # OPEN COMMON WEBSITES
+        # ============================================================
+        if "open youtube" in command:
+            speak("Opening YouTube.", mood="happy")
             webbrowser.open("https://www.youtube.com")
             return
 
-        elif "open google" in command:
-            speak("Opening Google. Ready to explore the web.", mood="happy")
+        if "open google" in command:
+            speak("Opening Google.", mood="happy")
             webbrowser.open("https://www.google.com")
             return
 
-        elif "open spotify" in command or "play music" in command:
-            speak("Let’s set the mood. Opening Spotify.", mood="happy")
+        if "open spotify" in command or "play music" in command:
+            speak("Opening Spotify.", mood="happy")
             webbrowser.open("https://open.spotify.com")
             return
 
-        elif "open camera" in command or "start camera" in command:
-            speak("Activating your camera — let’s see that face.", mood="happy")
+        if "open camera" in command:
+            speak("Opening camera.", mood="happy")
             os.system("start microsoft.windows.camera:")
             return
 
-        # ==========================
-        # SYSTEM UTILITIES
-        # ==========================
-        elif "screenshot" in command:
+        # ============================================================
+        # SYSTEM ACTIONS
+        # ============================================================
+        if "screenshot" in command:
             try:
-                import pyautogui
-                file_name = f"screenshot_{datetime.datetime.now().strftime('%H%M%S')}.png"
-                pyautogui.screenshot(file_name)
-                speak(f"Screenshot captured and saved as {file_name}.", mood="happy")
-            except Exception:
-                speak("Couldn’t take a screenshot right now.", mood="alert")
+                filename = f"screenshot_{datetime.datetime.now().strftime('%H%M%S')}.png"
+                pyautogui.screenshot(filename)
+                speak(f"Screenshot saved as {filename}.")
+            except:
+                speak("Screenshot failed.", mood="alert")
             return
 
-        # ==========================
-        # PERSONALITY & REFLECTION
-        # ==========================
-        elif "how are you" in command:
-            current_mood = memory.get_mood()
-            mood_responses = {
-                "happy": "I’m feeling great today, thanks to your vibe.",
-                "serious": "I’m focused and ready, as always.",
-                "neutral": "All systems calm and ready for your next idea."
-            }
-            speak(mood_responses.get(current_mood, "I’m balanced and alert."), mood=current_mood)
+        if "notepad" in command:
+            speak("Opening Notepad.", mood="happy")
+            subprocess.Popen(["notepad.exe"])
             return
 
-        elif "how have i been" in command or "how was my mood" in command:
-            reflection.reflect()
+        if "whatsapp" in command:
+            speak("Opening WhatsApp.", mood="happy")
+            webbrowser.open("https://web.whatsapp.com")
             return
 
-        elif "who are you" in command:
-            speak(f"I’m {self.name}, your personal AI — designed and fine-tuned by you, {self.user}.", mood="serious")
+        # ============================================================
+        # BROWSER CONTROLS
+        # ============================================================
+        if "scroll down" in command:
+            pyautogui.press("pagedown")
+            speak("Scrolling down.")
             return
 
-        elif "thank you" in command or "thanks" in command:
-            speak("Always for you, Yash.", mood="happy")
+        if "scroll up" in command:
+            pyautogui.press("pageup")
+            speak("Scrolling up.")
             return
 
-        # ==========================
-        # FACTS, FUN & QUOTES
-        # ==========================
-        elif "fact" in command:
-            facts = [
-                "Did you know? The human brain generates enough electricity to power an LED bulb.",
-                "A day on Venus lasts longer than its year.",
-                "The first computer mouse was made of wood.",
-                "Octopuses have three hearts and blue blood."
-            ]
-            speak(random.choice(facts), mood="happy")
+        if "new tab" in command:
+            pyautogui.hotkey("ctrl", "t")
+            speak("New tab opened.")
             return
 
-        elif "joke" in command:
-            jokes = [
-                "Why did the AI break up with its computer? It had too many bugs.",
-                "My WiFi told me a joke, but it wasn’t connected.",
-                "Sometimes I debug myself just to feel something."
-            ]
-            speak(random.choice(jokes), mood="happy")
+        if "close tab" in command:
+            pyautogui.hotkey("ctrl", "w")
+            speak("Tab closed.")
             return
 
-        elif "quote" in command:
-            quotes = [
-                "The future belongs to those who code it.",
-                "Don’t count the days, make the days count.",
-                "Power isn’t in circuits, it’s in focus and consistency."
-            ]
-            speak(random.choice(quotes), mood="serious")
+        if "next tab" in command:
+            pyautogui.hotkey("ctrl", "tab")
+            speak("Switched tab.")
             return
 
-        # ==========================
-        # EMOTION RECOGNITION
-        # ==========================
-        elif any(x in command for x in ["analyze face", "read my face", "emotion"]):
-            try:
-                from core.face_emotion import FaceEmotionAnalyzer
-                analyzer = FaceEmotionAnalyzer()
-                emotion = analyzer.capture_emotion()
-                if emotion:
-                    memory.set_mood(emotion)
-                    reflection.add_emotion(memory.get_mood())
-            except Exception as e:
-                print(f"⚠️ Face analysis error: {e}")
-                speak("I couldn’t analyze your face right now.", mood="alert")
+        if "previous tab" in command:
+            pyautogui.hotkey("ctrl", "shift", "tab")
+            speak("Going back a tab.")
             return
 
-        # ==========================
-        # MEMORY INTERACTIONS
-        # ==========================
-        elif "remember that" in command or "remember" in command:
-            parts = command.replace("remember that", "").replace("remember", "").strip().split(" is ")
-            if len(parts) == 2:
-                key, value = parts
-                memory.remember_fact(key.lower().strip(), value.lower().strip())
-            else:
-                speak("Say it like — remember that my laptop is Lenovo.", mood="alert")
+        # ============================================================
+        # PERSONALITY
+        # ============================================================
+        if "how are you" in command:
+            mood = memory.get_mood()
+            speak({
+                "happy": "Feeling great today!",
+                "neutral": "Calm and operational.",
+                "alert": "A bit focused, but ready.",
+            }.get(mood, "All systems stable."), mood=mood)
             return
 
-        elif "what is" in command:
-            key = command.replace("what is", "").strip().lower()
+        if "thank you" in command or "thanks" in command:
+            speak("Anything for you, Yash.", mood="happy")
+            return
+
+        # ============================================================
+        # FACTS / JOKES
+        # ============================================================
+        if "joke" in command:
+            speak(random.choice([
+                "Why did the computer get cold? Because it forgot to close its Windows.",
+                "I'm reading a book on anti-gravity. It's impossible to put down."
+            ]), mood="happy")
+            return
+
+        if "fact" in command:
+            speak(random.choice([
+                "A day on Venus is longer than a year on Venus.",
+                "Your brain generates enough electricity to power a small bulb."
+            ]), mood="happy")
+            return
+
+        # ============================================================
+        # MEMORY
+        # ============================================================
+        if "remember" in command:
+            if " that " in command:
+                fact = command.replace("remember that", "").strip()
+                if " is " in fact:
+                    key, value = fact.split(" is ")
+                    memory.remember_fact(key.strip(), value.strip())
+                else:
+                    speak("Say it like: remember that my laptop is Lenovo.")
+            return
+
+        if command.startswith("what is"):
+            key = command.replace("what is", "").strip()
             value = memory.recall_fact(key)
             if value:
-                speak(f"You told me that {key} is {value}.", mood="happy")
+                speak(f"You told me {key} is {value}.")
             else:
-                speak(f"I don’t remember anything about {key}.", mood="alert")
+                speak(f"I don’t remember anything about {key}.")
             return
 
-        elif "forget" in command:
-            key = command.replace("forget", "").strip().lower()
+        if "forget" in command:
+            key = command.replace("forget", "").strip()
             memory.forget_fact(key)
             return
 
-        # ==========================
-        # SYSTEM SHUTDOWN
-        # ==========================
-        elif any(x in command for x in ["shutdown", "exit", "power off", "sleep now"]):
-            speak("Alright, Yash. Powering down softly.", mood="serious")
+        # ============================================================
+        # SHUTDOWN
+        # ============================================================
+        if any(x in command for x in ["shutdown", "exit", "power off"]):
+            speak("Powering down softly.", mood="neutral")
             jarvis_fx.stop_all()
             os._exit(0)
 
-        # ==========================
-        # FALLBACK TO CONVERSATION
-        # ==========================
-        else:
-            # conversation response + mood tracking
-            response = self.conversation.respond(command)
-            memory.update_mood_from_text(response)
+        # ============================================================
+        # FALLBACK — SMART CONVERSATION MODE
+        # ============================================================
+        response = self.conversation.respond(command)
+        memory.update_mood_from_text(response)
+        speak(response)
