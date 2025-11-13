@@ -1,0 +1,28 @@
+# Yash's Jarvis - Requirements (Python 3.13.9 compatible)
+
+# --- Core Voice + Interface ---
+speechrecognition
+pyttsx3
+pyaudio
+pyqt5
+
+# --- Utility & Control ---
+pyautogui
+keyboard
+rapidfuzz
+
+# --- Multimedia ---
+moviepy
+ffmpeg-python
+yt-dlp
+
+# --- Face Recognition ---
+opencv-python
+face-recognition
+
+# --- AI/NLP & Learning ---
+openai
+numpy
+
+# --- Optional for summaries ---
+whisper
