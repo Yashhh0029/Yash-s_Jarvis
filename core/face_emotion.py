@@ -22,7 +22,7 @@ jarvis_fx = JarvisEffects()
 # Try loading DeepFace (optional)
 try:
     from deepface import DeepFace
-    DEEPFACE_AVAILABLE = True
+    DEEPFACE_AVAILABLE = False
 except Exception:
     DEEPFACE_AVAILABLE = False
     print("⚠️ DeepFace not available — using fallback face analyzer.")

@@ -1,16 +1,8 @@
 {
   "facts": {},
   "mood": "neutral",
-  "last_topic": "take",
+  "last_topic": null,
   "emotion_history": [
-    {
-      "mood": "serious",
-      "time": "2025-11-17 16:40:06"
-    },
-    {
-      "mood": "serious",
-      "time": "2025-11-17 17:23:12"
-    },
     {
       "mood": "serious",
       "time": "2025-11-18 01:11:41"
@@ -50,6 +42,14 @@
     {
       "mood": "neutral",
       "time": "2025-11-25 14:10:08"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-05 01:12:57"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-07 11:52:49"
     }
   ]
 }
