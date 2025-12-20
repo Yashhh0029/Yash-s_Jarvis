@@ -1,6 +1,55 @@
 {
-"facts": {},
-"mood": "neutral",
-"last_topic": null,
-"emotion_history": []
+  "facts": {},
+  "mood": "neutral",
+  "last_topic": "why",
+  "emotion_history": [
+    {
+      "mood": "neutral",
+      "time": "2025-12-20 01:24:08"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-20 01:26:17"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-20 01:26:32"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-20 01:57:25"
+    },
+    {
+      "mood": "happy",
+      "time": "2025-12-20 01:58:06"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-20 01:58:50"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-20 14:49:15"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-20 14:49:42"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-20 14:49:57"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-20 14:52:21"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-20 14:52:58"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-20 14:53:09"
+    }
+  ]
 }
