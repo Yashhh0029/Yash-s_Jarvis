@@ -7,6 +7,8 @@ import core.state as state
 from core.speech_engine import speak
 import core.voice_effects as fx
 from core.brain import brain
+SYSTEM_BOOTING = True
+
 
 # Optional emotion module
 try:
@@ -145,8 +147,9 @@ class SleepManager:
 
                 idle = time.time() - last
 
-                if idle >= SLEEP_TIMEOUT:
-                    _do_sleep_procedure(self.overlay)
+                if not SYSTEM_BOOTING and idle >= SLEEP_TIMEOUT:
+                 _do_sleep_procedure(self.overlay)
+
 
                 time.sleep(1)
 

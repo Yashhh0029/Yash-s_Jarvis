@@ -1,12 +1,10 @@
 # core/brain.py — IIT-Level Enhanced Friend Brain (UPGRADED)
 
-import random
-import time
 import html
 from typing import Optional
 
 # Core systems
-from core.memory_engine import JarvisMemory
+from core.context import memory
 from core.emotion_reflection import JarvisEmotionReflection
 import core.nlp_engine as nlp
 import core.state as state
@@ -17,13 +15,12 @@ try:
 except:
     openai = None
 
-memory = JarvisMemory()
 reflection = JarvisEmotionReflection()
 
 class Brain:
     def __init__(self):
         self.personality = "friend_balanced"
-        self._markov_chance = 0.25
+        self._markov_chance = 0.15
         self._friend_tease_chance = 0.15
         self._max_len = 450
         print("🧠 Brain online — mode:", self.personality)

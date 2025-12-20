@@ -1,7 +1,5 @@
 import os
 import webbrowser
-import datetime
-import random
 import psutil
 import pyautogui
 import subprocess
@@ -9,6 +7,23 @@ import time
 import traceback
 import threading
 import functools
+import random
+import datetime
+
+from core.whatsapp_selenium import send_whatsapp_message
+from core.intent_parser import parse_intent
+WHATSAPP_CONFIRM = None
+EXPECTING_FOLLOWUP = False
+
+THINKING_DELAY = 1     # seconds before saying "thinking"
+THINKING_COOLDOWN = 4.0   # minimum gap between thinking messages
+_last_thinking_time = 0
+PENDING_INTENT = None
+# ---------------- YOUTUBE STATE ----------------
+YOUTUBE_ACTIVE = False
+
+pyautogui.FAILSAFE = False
+pyautogui.PAUSE = 0.05
 
 # Desktop control - instantiate safely
 try:
@@ -19,8 +34,10 @@ except Exception:
 
 from core.speech_engine import speak, jarvis_fx
 from core.conversation_core import JarvisConversation
-from core.memory_engine import JarvisMemory
+from core.context import memory
 from core.emotion_reflection import JarvisEmotionReflection
+
+reflection = JarvisEmotionReflection()
 
 # NEW: Phase-2 skill modules
 try:
@@ -47,10 +64,6 @@ except Exception:
 import core.brain as brain_module
 import core.state as state
 
-# Single shared memory/reflection instances
-memory = JarvisMemory()
-reflection = JarvisEmotionReflection()
-
 # Attempt to import AI chat backend (ollama wrapper or other). If unavailable we'll fallback.
 try:
     from core.ai_chat import ai_chat_brain
@@ -59,26 +72,199 @@ except Exception:
     ai_chat_brain = None
     AI_CHAT_AVAILABLE = False
 
+def log_command(cmd):
+    with open("jarvis.log", "a", encoding="utf-8") as f:
+        f.write(f"{datetime.datetime.now()} | {cmd}\n")
+
 
 class JarvisCommandHandler:
     """JARVIS Brain — handles commands, responses, emotions & memory."""
 
-    def __init__(self, ai_think_message="Thinking..."):
+    def __init__(self, ai_think_message=None):
         print("🧠 Jarvis Command Handler Ready")
         self.user = "Yash"
         self.conversation = JarvisConversation()
         self._ai_lock = threading.Lock()
         self.ai_think_message = ai_think_message
+
     # ------------------------------------------------------------------
     # Public entrypoint
     # ------------------------------------------------------------------
     def process(self, command):
+        global PENDING_INTENT , YOUTUBE_ACTIVE
+
         if not command:
             return
 
+        log_command(command)
         raw_command = command
         command = command.lower().strip()
+
+        from core.context import get_last_action, set_last_action
+
         print(f"🎤 Processing Command: {command}")
+
+        # --------------------------------------------------------------
+        # GREETINGS
+        # --------------------------------------------------------------
+        if any(x in command for x in ["hello", "hi", "hey"]):
+            speak(random.choice([
+                f"Hello {self.user}, ready when you are.",
+                f"Hey {self.user}, I’m here.",
+                f"Hi {self.user}, systems active."
+            ]), mood="happy")
+            return    
+        # ==================================================
+        # WHATSAPP MESSAGE — CLEAN MULTI TURN FLOW (SELENIUM)
+        # ==================================================
+        if PENDING_INTENT and PENDING_INTENT.get("intent") == "whatsapp_message":
+         
+            # STEP 2 — capture contact name
+            if PENDING_INTENT["contact"] is None:
+                PENDING_INTENT["contact"] = raw_command.strip()
+                speak(
+                    f"What should I send to {PENDING_INTENT['contact']}?",
+                    mood="neutral"
+                )
+                return
+
+            # STEP 3 — capture message & SEND
+            if PENDING_INTENT["message"] is None:
+               PENDING_INTENT["message"] = raw_command.strip()
+
+               contact = PENDING_INTENT["contact"]
+               message = PENDING_INTENT["message"]
+
+               speak(f"Sending message to {contact}.", mood="happy")
+               threading.Thread(
+                  target=send_whatsapp_message,
+                  args=(contact, message),
+                  daemon=True
+                  ).start()
+
+               PENDING_INTENT = None
+               return
+
+        # ==================================================
+        # START WHATSAPP MESSAGE MODE (ONLY ENTRY POINT)
+        # ==================================================
+        if (
+            PENDING_INTENT is None
+            and "whatsapp" in command
+            and any(word in command for word in ["send", "message", "msg"])
+        ):
+            PENDING_INTENT = {
+                "intent": "whatsapp_message",
+                "contact": None,
+                "message": None
+            }
+            speak("Whom should I message?", mood="neutral")
+            return
+
+        # --------------------------------------------------------------
+        # INTENT THINKING GATE (NO ACTION, NO AUTOMATION)
+        # --------------------------------------------------------------
+        intent = parse_intent(raw_command)
+
+        intent_name = intent.get("intent")
+        params = intent.get("params", {})
+        confidence = intent.get("confidence", 0.0)
+
+        print("🧠 INTENT PARSED:", intent)
+        
+        # --------------------------------------------------------------
+        # IGNORE VERY SHORT / BROKEN SPEECH FRAGMENTS
+        # (does NOT affect logic, only prevents AI spam)
+        # --------------------------------------------------------------
+        if len(raw_command.strip()) < 4:
+         return
+        
+        # --------------------------------------------------------------
+        # FOLLOW-UP CONTINUATION (DO NOT RE-INTERPRET)
+        # --------------------------------------------------------------
+        global EXPECTING_FOLLOWUP
+        if EXPECTING_FOLLOWUP:
+            EXPECTING_FOLLOWUP = False
+            threading.Thread(
+                target=self._ai_pipeline_worker,
+                args=(raw_command,),
+                daemon=True
+            ).start()
+            return
+
+        # --------------------------------------------------------------
+        # LOW-CONFIDENCE INTENT → SEND DIRECTLY TO AI
+        # --------------------------------------------------------------
+        if (
+            intent_name == "unknown"
+            or confidence < 0.5
+        ) and not PENDING_INTENT:
+            threading.Thread(
+                target=self._ai_pipeline_worker,
+                args=(raw_command,),
+                daemon=True
+            ).start()
+            return
+
+        # --------------------------------------------------------------
+        # YOUTUBE: PLAY Nth VIDEO AFTER SEARCH
+        # --------------------------------------------------------------
+        if (
+            state.LAST_APP_CONTEXT == "youtube"
+            and state.LAST_YOUTUBE_SEARCH
+            and "play" in command
+            and "video" in command
+        ):
+
+            number_map = {
+                "first": 1, "1st": 1, "one": 1,
+                "second": 2, "2nd": 2, "two": 2,
+                "third": 3, "3rd": 3, "three": 3,
+                "fourth": 4, "4th": 4,
+                "fifth": 5, "5th": 5
+            }
+
+            index = 1
+            for word, num in number_map.items():
+                if word in command:
+                    index = num
+                    break
+
+            speak(f"Playing video number {index}.", mood="happy")
+
+            time.sleep(3)
+            pyautogui.click(500, 400)   # force browser focus
+            time.sleep(0.2)
+            pyautogui.hotkey("home")
+            time.sleep(0.3)
+
+            pyautogui.press(
+                "tab",
+                presses=6 + index * 2,
+                interval=0.15
+            )
+            pyautogui.press("enter")
+
+            state.LAST_YOUTUBE_SEARCH = False
+            return
+        
+        # --------------------------------------------------------------
+        # INCOMPLETE INTENT → ASK FOLLOW-UP (HUMAN BEHAVIOR)
+        # --------------------------------------------------------------
+        if intent_name == "open_app" and not params.get("app"):
+            PENDING_INTENT = intent
+            speak("What should I open?")
+            return
+
+        if intent_name == "search" and not params.get("query"):
+            speak("What should I search for?")
+            PENDING_INTENT = intent
+            return
+
+        if intent_name == "type_text" and not params.get("text"):
+            PENDING_INTENT = intent
+            speak("What should I type?")
+            return
 
         # helper: enhanced speak
         def speak_enhanced(text, mood=None):
@@ -179,12 +365,24 @@ class JarvisCommandHandler:
                             return
 
                 # fallback: pick latest doc
-                docs = [f for f in os.listdir('.') if any(f.lower().endswith(ext) for ext in [".pdf", ".docx", ".txt", ".md"])]
+                docs = [
+                    f for f in os.listdir('.')
+                    if any(f.lower().endswith(ext) for ext in [".pdf", ".docx", ".txt", ".md"])
+                ]
+
                 if docs:
                     chosen = os.path.abspath(docs[-1])
-                    speak(f"Reading latest document: {os.path.basename(chosen)}", mood="neutral")
-                    threading.Thread(target=document_reader.read, args=(chosen, False), daemon=True).start()
+                    speak(
+                        f"Reading latest document: {os.path.basename(chosen)}",
+                        mood="neutral"
+                    )
+                    self._ai_pipeline_worker(raw_command)
                     return
+
+                # 👇 ask user if nothing detected
+                speak("Please tell me the document file name or full path.", mood="neutral")
+                return
+  
         except:
             pass
 
@@ -204,12 +402,28 @@ class JarvisCommandHandler:
                         threading.Thread(target=video_reader.summarize, args=(path,), daemon=True).start()
                         return
 
-                vids = [f for f in os.listdir('.') if any(f.lower().endswith(ext) for ext in [".mp4", ".mkv", ".mov"])]
+                vids = [
+                    f for f in os.listdir('.')
+                    if any(f.lower().endswith(ext) for ext in [".mp4", ".mkv", ".mov"])
+                ]
+
                 if vids:
                     chosen = os.path.abspath(vids[-1])
-                    speak(f"Summarizing latest video: {os.path.basename(chosen)}", mood="neutral")
-                    threading.Thread(target=video_reader.summarize, args=(chosen,), daemon=True).start()
+                    speak(
+                        f"Summarizing latest video: {os.path.basename(chosen)}",
+                        mood="neutral"
+                    )
+                    threading.Thread(
+                        target=video_reader.summarize,
+                        args=(chosen,),
+                        daemon=True
+                    ).start()
                     return
+
+                # 👇 ask user if nothing detected
+                speak("Please tell me the video file name or full path.", mood="neutral")
+                return
+
         except:
             pass
 
@@ -227,14 +441,21 @@ class JarvisCommandHandler:
                             threading.Thread(target=music_player.play, args=(path,), daemon=True).start()
                             return
 
-            # stream query
-            if ("play song" in command or command.startswith("play ")) and music_stream:
-                q = command
-                for p in ["play song", "play music", "play"]:
-                    q = q.replace(p, "", 1).strip()
+            # stream query (SONG ONLY — do not hijack video)
+            if (
+                music_stream
+                and "play song" in command
+                and state.LAST_APP_CONTEXT != "youtube"
+            ):
+                q = command.replace("play song", "", 1).strip()
                 if q:
-                    threading.Thread(target=music_stream.play, args=(q,), daemon=True).start()
+                    threading.Thread(
+                        target=music_stream.play,
+                        args=(q,),
+                        daemon=True
+                    ).start()
                     return
+
         except:
             pass
         # --------------------------------------------------------------
@@ -355,17 +576,6 @@ class JarvisCommandHandler:
             return
 
         # --------------------------------------------------------------
-        # GREETINGS
-        # --------------------------------------------------------------
-        if any(x in command for x in ["hello", "hi", "hey"]):
-            speak(random.choice([
-                f"Hello {self.user}, ready when you are.",
-                f"Hey {self.user}, I’m here.",
-                f"Hi {self.user}, systems active."
-            ]), mood="happy")
-            return
-
-        # --------------------------------------------------------------
         # TIME / DATE
         # --------------------------------------------------------------
         if command == "time" or "what's the time" in command or "time kya" in command:
@@ -400,9 +610,36 @@ class JarvisCommandHandler:
         # OPEN WEBSITES
         # --------------------------------------------------------------
         if "open youtube" in command:
-            speak("Opening YouTube.", mood="happy")
             webbrowser.open("https://www.youtube.com")
+            speak("YouTube opened.", mood="happy")
+
+            state.LAST_APP_CONTEXT = "youtube"
+            state.LAST_YOUTUBE_SEARCH = False
+            YOUTUBE_ACTIVE = True
+
+            time.sleep(2)
+            pyautogui.press("tab")
             return
+
+
+ 
+        if "search youtube for" in command:
+            query = command.replace("search youtube for", "").strip()
+
+            webbrowser.open(
+                f"https://www.youtube.com/results?search_query={query.replace(' ', '+')}"
+            )
+
+            state.LAST_APP_CONTEXT = "youtube"
+            state.LAST_YOUTUBE_SEARCH = True
+            YOUTUBE_ACTIVE = True
+
+            set_last_action("youtube_search")
+
+
+            speak(f"Searching YouTube for {query}", mood="happy")
+            return
+
 
         if "open google" in command:
             speak("Opening Google.", mood="happy")
@@ -439,7 +676,18 @@ class JarvisCommandHandler:
             subprocess.Popen(["notepad.exe"])
             return
 
-        if "whatsapp" in command:
+        # --------------------------------------------------------------
+        # WHATSAPP OPEN / CLOSE (PRIORITY)
+        # --------------------------------------------------------------
+        if "whatsapp" in command and any(x in command for x in ["close", "exit", "quit", "band"]):
+            try:
+                pyautogui.hotkey("ctrl", "w")
+                speak("Closing WhatsApp.", mood="neutral")
+            except:
+                speak("Couldn't close WhatsApp.", mood="alert")
+            return
+
+        if "open whatsapp" in command:
             speak("Opening WhatsApp.", mood="happy")
             webbrowser.open("https://web.whatsapp.com")
             return
@@ -447,26 +695,201 @@ class JarvisCommandHandler:
         # --------------------------------------------------------------
         # BROWSER TAB CONTROLS
         # --------------------------------------------------------------
+       
+        # --------------------------------------------------------------
+        # YOUTUBE: NEXT / PREVIOUS VIDEO
+        # --------------------------------------------------------------
+        if state.LAST_APP_CONTEXT == "youtube" and "play next video" in command:
+            pyautogui.hotkey("shift", "n")
+            speak("Playing next video.", mood="happy")
+            return
+
+        if state.LAST_APP_CONTEXT == "youtube" and (
+            "play previous video" in command or "play prev video" in command
+        ):
+            pyautogui.hotkey("shift", "p")
+            speak("Playing previous video.", mood="happy")
+            return
+        # --------------------------------------------------------------
+        # YOUTUBE: PAUSE / RESUME VIDEO
+        # --------------------------------------------------------------
+        if state.LAST_APP_CONTEXT == "youtube" and "pause video" in command:
+            pyautogui.press("k")
+            speak("Video paused.", mood="neutral")
+            return
+
+        if state.LAST_APP_CONTEXT == "youtube" and (
+            "resume video" in command or
+            ("play video" in command and not state.LAST_YOUTUBE_SEARCH)
+        ):
+            pyautogui.press("k")
+            speak("Resuming video.", mood="happy")
+            return
+        # --------------------------------------------------------------
+        # YOUTUBE: MUTE / UNMUTE VIDEO
+        # --------------------------------------------------------------
+        if state.LAST_APP_CONTEXT == "youtube" and "mute video" in command:
+            pyautogui.press("m")
+            speak("Video muted.", mood="neutral")
+            return
+
+        if state.LAST_APP_CONTEXT == "youtube" and "unmute video" in command:
+            pyautogui.press("m")
+            speak("Video unmuted.", mood="happy")
+            return
+        # --------------------------------------------------------------
+        # YOUTUBE: SEEK FORWARD / BACKWARD
+        # --------------------------------------------------------------
+        if state.LAST_APP_CONTEXT == "youtube" and "forward" in command:
+
+            if "30" in command:
+                presses = 6
+            elif "10" in command:
+                presses = 2
+            else:
+                presses = 1  # default = 5 seconds
+
+            pyautogui.press("right", presses=presses, interval=0.15)
+            speak("Forwarding video.", mood="neutral")
+            return
+
+        if state.LAST_APP_CONTEXT == "youtube" and any(x in command for x in ["backward", "back"]):
+
+            if "30" in command:
+                presses = 6
+            elif "10" in command:
+                presses = 2
+            else:
+                presses = 1  # default = 5 seconds
+
+            pyautogui.press("left", presses=presses, interval=0.15)
+            speak("Rewinding video.", mood="neutral")
+            return
+        # --------------------------------------------------------------
+        # YOUTUBE: FULLSCREEN / EXIT FULLSCREEN
+        # --------------------------------------------------------------
+        if state.LAST_APP_CONTEXT == "youtube" and (
+            "fullscreen video" in command or
+            "full screen video" in command
+        ):
+            pyautogui.press("f")
+            speak("Entering fullscreen.", mood="happy")
+            return
+
+        if state.LAST_APP_CONTEXT == "youtube" and (
+            "exit fullscreen" in command or
+            "close fullscreen" in command
+        ):
+            pyautogui.press("f")
+            speak("Exiting fullscreen.", mood="neutral")
+            return
+        # --------------------------------------------------------------
+        # BROWSER: BACK / FORWARD
+        # --------------------------------------------------------------
+        if any(x in command for x in ["go back", "browser back", "back page"]):
+            pyautogui.hotkey("alt", "left")
+            speak("Going back.", mood="neutral")
+            return
+
+        if any(x in command for x in ["go forward", "browser forward", "forward page"]):
+            pyautogui.hotkey("alt", "right")
+            speak("Going forward.", mood="neutral")
+            return
+        # --------------------------------------------------------------
+        # YOUTUBE: PLAY CURRENTLY FOCUSED VIDEO
+        # --------------------------------------------------------------
+        if state.LAST_APP_CONTEXT == "youtube" and any(
+            x in command for x in ["play this video", "play this one", "play this"]
+        ):
+            pyautogui.press("enter")
+            set_last_action(None)
+            speak("Playing this video.", mood="happy")
+            state.LAST_APP_CONTEXT = "youtube"
+            state.LAST_YOUTUBE_SEARCH = False
+            return
+
+        # --------------------------------------------------------------
+        # YOUTUBE: CORE PLAYER CONTROLS (ALWAYS AVAILABLE)
+        # --------------------------------------------------------------
+        if YOUTUBE_ACTIVE and state.LAST_APP_CONTEXT == "youtube":
+
+            # Play / Pause
+            if any(command == x or command.startswith(x) for x in ["play", "pause", "resume"]):
+                pyautogui.press("k")
+                speak("Okay.", mood="neutral")
+                return
+
+            # Fullscreen toggle
+            if any(x in command for x in ["fullscreen", "full screen"]):
+                pyautogui.press("f")
+                speak("Fullscreen.", mood="happy")
+                return
+
+            if any(x in command for x in ["exit fullscreen", "close fullscreen"]):
+                pyautogui.press("f")
+                speak("Exited fullscreen.", mood="neutral")
+                return
+
+            # Seek forward
+            if "forward" in command:
+                if "30" in command:
+                    presses = 6
+                elif "10" in command:
+                    presses = 2
+                else:
+                    presses = 1
+                pyautogui.press("right", presses=presses, interval=0.15)
+                speak("Forwarding.", mood="neutral")
+                return
+
+            # Seek backward
+            if any(x in command for x in ["backward", "rewind", "back"]):
+                if "30" in command:
+                    presses = 6
+                elif "10" in command:
+                    presses = 2
+                else:
+                    presses = 1
+                pyautogui.press("left", presses=presses, interval=0.15)
+                speak("Rewinding.", mood="neutral")
+                return
+
+        # --------------------------------------------------------------
+        # SCROLL CONTROLS (FOCUS-SAFE & RELIABLE)
+        # --------------------------------------------------------------
         if "scroll down" in command:
-            pyautogui.press("pagedown")
+            # Force page focus (critical for YouTube / browsers)
+            pyautogui.click(500, 400)
+            time.sleep(0.1)
+
+            amount = -600
+            if any(x in command for x in ["little", "small", "slightly"]):
+                amount = -300
+            elif any(x in command for x in ["lot", "much", "fast"]):
+                amount = -1200
+
+            pyautogui.scroll(amount)
             speak("Scrolling down.")
             return
 
         if "scroll up" in command:
-            pyautogui.press("pageup")
+            # Force page focus (critical for YouTube / browsers)
+            pyautogui.click(500, 400)
+            time.sleep(0.1)
+
+            amount = 600
+            if any(x in command for x in ["little", "small", "slightly"]):
+                amount = 300
+            elif any(x in command for x in ["lot", "much", "fast"]):
+                amount = 1200
+
+            pyautogui.scroll(amount)
             speak("Scrolling up.")
             return
 
-        if "new tab" in command:
-            pyautogui.hotkey("ctrl", "t")
-            speak("New tab opened.")
-            return
-
-        if "close tab" in command:
-            pyautogui.hotkey("ctrl", "w")
-            speak("Tab closed.")
-            return
-
+        # --------------------------------------------------------------
+        # TAB NAVIGATION (NOT CLOSE)
+        # --------------------------------------------------------------
         if "next tab" in command:
             pyautogui.hotkey("ctrl", "tab")
             speak("Switched tab.")
@@ -476,6 +899,29 @@ class JarvisCommandHandler:
             pyautogui.hotkey("ctrl", "shift", "tab")
             speak("Going back a tab.")
             return
+        # --------------------------------------------------------------
+        # OPEN Nth TAB
+        # --------------------------------------------------------------
+        if "open" in command and "tab" in command:
+
+            tab_map = {
+                "first": "1", "1st": "1",
+                "second": "2", "2nd": "2",
+                "third": "3", "3rd": "3",
+                "fourth": "4", "4th": "4",
+                "fifth": "5", "5th": "5",
+                "sixth": "6", "6th": "6",
+                "seventh": "7", "7th": "7",
+                "eighth": "8", "8th": "8",
+                "ninth": "9", "9th": "9"
+            }
+
+            for word, key in tab_map.items():
+                if word in command:
+                    pyautogui.hotkey("ctrl", key)
+                    speak(f"Opening {word} tab.")
+                    return
+
         # --------------------------------------------------------------
         # PERSONALITY QUICK RESPONSES
         # --------------------------------------------------------------
@@ -548,21 +994,37 @@ class JarvisCommandHandler:
             return
 
         # --------------------------------------------------------------
-        # SHUTDOWN
+        # SHUTDOWN (CONFIRMATION MODE)
         # --------------------------------------------------------------
-        if any(x in command for x in ["shutdown", "exit", "power off"]):
-            speak("Powering down softly…", mood="neutral")
-            try:
-                jarvis_fx.stop_all()
-            except:
-                pass
-            os._exit(0)
+        if any(x in command for x in ["shutdown", "power off"]):
+            speak("Are you sure you want to shut down?")
+            PENDING_INTENT = {"intent": "shutdown_confirm"}
+            return
 
+        if PENDING_INTENT and PENDING_INTENT.get("intent") == "shutdown_confirm":
+            if command in ["yes", "confirm", "do it", "yes shutdown"]:
+                speak("Shutting down now.", mood="neutral")
+                try:
+                    jarvis_fx.stop_all()
+                except:
+                    pass
+                os._exit(0)
+            else:
+                speak("Shutdown cancelled.")
+            PENDING_INTENT = None
+            return
+        
         # --------------------------------------------------------------
         # AI / CONVERSATIONAL FALLBACK PIPELINE
         # --------------------------------------------------------------
         # Heuristic: “open / search / play / launch” should stay non-AI
-        if any(command.startswith(pref) for pref in ["open ", "launch ", "search ", "play ", "type "]):
+        if (
+           not YOUTUBE_ACTIVE
+           and any(command.startswith(pref) for pref in ["open ", "launch ", "search ", "type "])
+           and "tab" not in command
+           and "window" not in command
+            ):
+
             try:
                 query = command
                 for p in ["search ", "find ", "open ", "launch "]:
@@ -594,15 +1056,17 @@ class JarvisCommandHandler:
     # --------------------------------------------------------------
     def _ai_pipeline_worker(self, raw_command):
         try:
-            # Think message (throttled)
-            try:
-                if self._ai_lock.acquire(blocking=False):
-                    try:
-                        speak(self.ai_think_message, mood="neutral")
-                    finally:
-                        self._ai_lock.release()
-            except:
-                pass
+            # --------------------------------------------------
+            # Delayed, conditional "thinking" indicator
+            # --------------------------------------------------
+            cancel_thinking = threading.Event()
+
+            thinking_thread = threading.Thread(
+                target=maybe_say_thinking,
+                args=(speak, cancel_thinking),
+                daemon=True
+            )
+            thinking_thread.start()
 
             ai_response = None
 
@@ -610,51 +1074,80 @@ class JarvisCommandHandler:
             if AI_CHAT_AVAILABLE and ai_chat_brain:
                 try:
                     ai_response = ai_chat_brain.ask(raw_command)
-                except:
+                except Exception:
                     ai_response = None
 
             # 2) Fallback to JarvisConversation
             if not ai_response:
                 try:
                     ai_response = self.conversation.respond(raw_command)
-                except:
+                    cancel_thinking.set()
+                except Exception:
                     ai_response = None
 
             # 3) Final fallback to brain.friend-mode reply
             if not ai_response:
                 try:
                     ai_response = brain_module.brain.fallback_reply(raw_command)
-                except:
+                except Exception:
                     ai_response = "I didn’t get that — say it differently?"
+
+            # ❗ Stop thinking message once response is ready (safe if already set)
+            cancel_thinking.set()
 
             # 4) Mood reflection & store
             try:
                 inferred = brain_module.brain.detect_text_emotion(ai_response)
                 if inferred:
                     memory.set_mood(inferred)
-            except:
+            except Exception:
                 pass
 
-            # 5) Enhance with cinematic Jarvis styling
+            # 5) Enhance with cinematic Jarvis styling (ONLY PLACE)
             try:
                 enhanced = brain_module.brain.enhance_response(
                     ai_response,
                     mood=memory.get_mood(),
                     last_topic=memory.get_last_topic()
                 )
-            except:
+            except Exception:
                 enhanced = ai_response
 
             # 6) Keep system alive
             try:
                 state.LAST_INTERACTION = time.time()
-            except:
+            except Exception:
                 pass
 
             # 7) Speak AI response
+            global EXPECTING_FOLLOWUP
+            if enhanced.strip().endswith("?"):
+                EXPECTING_FOLLOWUP = True
+
             speak(enhanced)
 
+
         except Exception as e:
+            try:
+                cancel_thinking.set()
+            except Exception:
+                pass
             print("⚠️ AI error:", e)
-            fallback = "Sorry, I couldn’t process that right now."
-            speak(fallback)
+            speak("Sorry, I couldn’t process that right now.")
+
+def maybe_say_thinking(speak_fn, cancel_event):
+    global _last_thinking_time
+
+    time.sleep(THINKING_DELAY)
+
+    # If response already arrived, do nothing
+    if cancel_event.is_set():
+        return
+
+    # Throttle thinking messages
+    if time.time() - _last_thinking_time < THINKING_COOLDOWN:
+        return
+
+    speak_fn("Thinking…")
+    _last_thinking_time = time.time()
+

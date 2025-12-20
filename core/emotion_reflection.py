@@ -11,17 +11,16 @@ Fully compatible with:
 import datetime
 import random
 
-from core.memory_engine import JarvisMemory
+from core.context import memory as shared_memory
 from core.speech_engine import speak
-
-# shared singleton memory instance
-shared_memory = JarvisMemory()
-
 
 class JarvisEmotionReflection:
     """Tracks mood history and provides soft emotional insights."""
 
     def __init__(self):
+        from core.memory_engine import JarvisMemory
+        self.memory = JarvisMemory()
+
         # ensure shared emotional history exists only once
         if "emotion_history" not in shared_memory.memory:
             shared_memory.memory["emotion_history"] = []

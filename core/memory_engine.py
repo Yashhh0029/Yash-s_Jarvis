@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import random
+import time
 from core.speech_engine import speak
 
 # Module-level singleton holder
@@ -16,6 +17,11 @@ class JarvisMemory:
     JarvisMemory() across modules return the same shared instance. This
     prevents repeated initialization prints and duplicated loads.
     """
+    listener_hook = None
+
+    def register_listener_hook(fn):
+       global listener_hook
+       listener_hook = fn
 
     def __new__(cls, *args, **kwargs):
         global _INSTANCE
@@ -44,10 +50,12 @@ class JarvisMemory:
 
         self._load_memory()
         self._validate_structure()
+        # runtime-only (not persisted)
+        self.last_action = None
 
         # mark initialized (prevents repeated prints)
         self._initialized = True
-        print("🧠 Memory Engine Initialized")
+        print("🧠 Memory Engine Initialized")   
 
     # -------------------------------------------------------
     def _validate_structure(self):
@@ -226,6 +234,28 @@ class JarvisMemory:
 
     def get_last_topic(self):
         return self.memory.get("last_topic", None)
+
+    # -------------------- ACTION OUTCOME MEMORY --------------------
+    def record_action(self, intent, command, status, reason=None):
+        """
+        Store the outcome of the last executed action.
+        Runtime-only (not persisted to disk).
+        """
+        try:
+            self.last_action = {
+                "intent": intent,
+                "command": command,
+                "status": status,
+                "reason": reason,
+                "timestamp": time.time()
+            }
+        except Exception:
+            pass
+
+    def get_last_action(self):
+        """Return last recorded action outcome."""
+        return self.last_action
+
 
     # -------------------- COMPAT HELPERS --------------------
     def update_mood_from_text(self, text):

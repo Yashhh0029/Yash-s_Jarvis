@@ -32,11 +32,6 @@ LISTENING = False               # alias → avoid breaking older imports
 # Wake-word availability
 WAKE_WORD_ENABLED = True
 
-# -------------------------------------------------------------
-# TIMESTAMPS
-# -------------------------------------------------------------
-LAST_INTERACTION = None
-
 # Duration (in seconds) before entering sleep mode
 INACTIVITY_TIMEOUT = 120
 
@@ -49,3 +44,7 @@ LAST_TOPIC = None           # used for topic continuation in brain
 
 # Continuous conversation flag (Jarvis stays active)
 CONVERSATION_ACTIVE = False
+
+LAST_APP_CONTEXT = None
+LAST_YOUTUBE_SEARCH = False
+LAST_INTERACTION = 0

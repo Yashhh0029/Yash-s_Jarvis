@@ -44,8 +44,8 @@ except Exception:
 
 # Optional memory (not required but used if available)
 try:
-    from core.memory_engine import JarvisMemory
-    _MEMORY = JarvisMemory()
+   from core.context import memory as _MEMORY
+
 except Exception:
     _MEMORY = None
 

@@ -45,8 +45,7 @@ except ImportError:
 # Memory + State
 # -------------------------------------------
 try:
-    from core.memory_engine import JarvisMemory
-    memory = JarvisMemory()
+    from core.context import memory
 except ImportError:
     memory = None
 
@@ -230,7 +229,8 @@ INSTRUCTIONS:
                 try:
                     state.LAST_TOPIC = prompt
                 except: pass
-                return ans
+                return ans.strip() if ans else None
+
 
         # 3. Failover to Local (Scripted)
         print("⚠️ Ollama offline/unreachable. Using local fallback.")

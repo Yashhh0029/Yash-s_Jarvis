@@ -64,8 +64,8 @@ import core.nlp_engine as nlp
 from core.document_reader import _summarize_text  # reuse summarizer
 from core.voice_effects import overlay_instance
 from core.memory_engine import JarvisMemory
+from core.context import memory
 
-memory = JarvisMemory()
 
 
 # -------------------------

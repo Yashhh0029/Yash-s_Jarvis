@@ -1,262 +1,167 @@
 # core/desktop_control.py
 """
-Desktop Control – Ultra Stable + Cinematic Version
-Fully compatible with command_handler, supports:
-✓ Brightness (smooth + instant)
-✓ Volume (smooth + instant)
-✓ Window control
-✓ System actions (lock, restart)
-✓ Screenshot (file + clipboard)
-✓ Dark mode toggle
-✓ Focus assist
+Desktop Executor
+----------------
+Single source of truth for all OS / desktop operations.
+NO speech logic. NO AI logic.
 """
 
 import os
-import ctypes
+import time
 import subprocess
+import ctypes
 import pyautogui
 import keyboard
-import time
+import webbrowser
 
 
 class DesktopControl:
 
-    # ============================================================
-    # BRIGHTNESS CONTROL
-    # ============================================================
-    def _set_brightness(self, level):
+    # ===================== VOLUME =====================
+    def volume_control(self, action: str, smooth: bool = False):
         try:
-            level = max(0, min(100, int(level)))
-            cmd = (
-                "(Get-WmiObject -Namespace root/WMI "
-                "-Class WmiMonitorBrightnessMethods).WmiSetBrightness(1,{})".format(level)
-            )
-            subprocess.call(["powershell.exe", "-Command", cmd])
-        except:
+            if smooth:
+                key = "volume down" if action == "down" else "volume up"
+                for _ in range(12):
+                    keyboard.send(key)
+                    time.sleep(0.05)
+                return
+
+            if action == "up":
+                keyboard.send("volume up")
+            elif action == "down":
+                keyboard.send("volume down")
+            elif action == "mute":
+                keyboard.send("volume mute")
+        except Exception:
             pass
 
-    def _get_brightness(self):
+    # ===================== BRIGHTNESS =====================
+    def _set_brightness(self, level: int):
+        level = max(0, min(100, int(level)))
+        cmd = (
+            "(Get-WmiObject -Namespace root/WMI "
+            "-Class WmiMonitorBrightnessMethods)"
+            f".WmiSetBrightness(1,{level})"
+        )
+        subprocess.call(["powershell.exe", "-Command", cmd])
+
+    def _get_brightness(self) -> int:
         try:
             cmd = "(Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightness).CurrentBrightness"
-            val = subprocess.check_output(
+            return int(subprocess.check_output(
                 ["powershell.exe", "-Command", cmd]
-            ).decode().strip()
-            return int(val)
+            ).decode().strip())
         except:
             return 50
 
-    def increase_brightness(self):
+    def change_brightness(self, direction: str, smooth: bool = False):
         try:
             curr = self._get_brightness()
-            self._set_brightness(curr + 15)
+            if smooth:
+                target = 10 if direction == "down" else 90
+                step = -3 if direction == "down" else 3
+                while (direction == "down" and curr > target) or \
+                      (direction == "up" and curr < target):
+                    curr += step
+                    self._set_brightness(curr)
+                    time.sleep(0.04)
+            else:
+                self._set_brightness(curr + (15 if direction == "up" else -15))
         except:
             pass
+        
 
-    def decrease_brightness(self):
-        try:
-            curr = self._get_brightness()
-            self._set_brightness(curr - 15)
-        except:
-            pass
-
-    # Smooth transition
-    def smooth_brightness(self, direction="down"):
-        try:
-            curr = self._get_brightness()
-            target = 10 if direction == "down" else 90
-            step = -3 if direction == "down" else 3
-
-            if direction == "down" and curr < target:
-                return
-            if direction == "up" and curr > target:
-                return
-
-            while (direction == "down" and curr > target) or \
-                  (direction == "up" and curr < target):
-
-                curr += step
-                self._set_brightness(curr)
-                time.sleep(0.04)
-        except:
-            pass
-
-    # ============================================================
-    # VOLUME CONTROL
-    # ============================================================
-    def volume_up(self):
-        try:
-            keyboard.send("volume_up")
-        except:
-            pass
-
-    def volume_down(self):
-        try:
-            keyboard.send("volume_down")
-        except:
-            pass
-
-    def mute(self):
-        try:
-            keyboard.send("volume_mute")
-        except:
-            pass
-
-    def unmute(self):
-        try:
-            keyboard.send("volume_mute")
-        except:
-            pass
-
-    def smooth_volume(self, direction="down"):
-        try:
-            key = "volume_down" if direction == "down" else "volume_up"
-            for _ in range(12):
-                keyboard.send(key)
-                time.sleep(0.05)
-        except:
-            pass
-
-    # ============================================================
-    # WINDOW CONTROL
-    # ============================================================
+    # ===================== WINDOW =====================
     def show_desktop(self):
-        try:
-            keyboard.send("windows+d")
-        except:
-            pass
+        keyboard.send("windows+d")
 
-    def close_window(self):
-        try:
-            keyboard.send("alt+f4")
-        except:
-            pass
+    def minimize_current(self):
+        keyboard.send("windows+down")
 
-    def maximize_window(self):
-        try:
-            keyboard.send("windows+up")
-        except:
-            pass
+    def maximize_current(self):
+        keyboard.send("windows+up")
 
-    def minimize_window(self):
-        try:
-            keyboard.send("windows+down")
-        except:
-            pass
+    def close_current(self):
+        keyboard.send("alt+f4")
 
-    def next_window(self):
-        try:
-            keyboard.press("alt")
-            keyboard.press("tab")
-            keyboard.release("tab")
-            keyboard.release("alt")
-        except:
-            pass
+    def switch_window(self, reverse=False):
+        if reverse:
+            keyboard.send("alt+shift+tab")
+        else:
+            keyboard.send("alt+tab")
 
-    def previous_window(self):
-        try:
-            keyboard.press("alt")
-            keyboard.press("shift")
-            keyboard.press("tab")
-            keyboard.release("tab")
-            keyboard.release("shift")
-            keyboard.release("alt")
-        except:
-            pass
+    # ===================== FILE / FOLDER =====================
+    def open_folder(self, name: str):
+        paths = {
+            "downloads": os.path.join(os.environ["USERPROFILE"], "Downloads"),
+            "documents": os.path.join(os.environ["USERPROFILE"], "Documents"),
+            "desktop": os.path.join(os.environ["USERPROFILE"], "Desktop"),
+            "pictures": os.path.join(os.environ["USERPROFILE"], "Pictures"),
+        }
+        path = paths.get(name)
+        if path and os.path.exists(path):
+            os.startfile(path)
 
-    # ============================================================
-    # SETTINGS / SYSTEM UI
-    # ============================================================
-    def open_task_manager(self):
-        try:
-            os.system("start taskmgr")
-        except:
-            pass
+     # ✅ STEP 2 — ADD THIS METHOD HERE
+    def open_any_folder(self, folder_name: str):
+        """
+        Search common locations for a folder and open it if found.
+        """
+        search_roots = [
+            os.environ["USERPROFILE"],
+            os.path.join(os.environ["USERPROFILE"], "Desktop"),
+            os.path.join(os.environ["USERPROFILE"], "Documents"),
+            os.path.join(os.environ["USERPROFILE"], "Downloads"),
+        ]
 
-    def open_settings(self):
-        try:
-            os.system("start ms-settings:")
-        except:
-            pass
+        folder_name = folder_name.lower()
 
-    def open_display_settings(self):
-        try:
-            os.system("start ms-settings:display")
-        except:
-            pass
+        for root in search_roots:
+            for dirpath, dirnames, _ in os.walk(root):
+                for d in dirnames:
+                    if d.lower() == folder_name:
+                        os.startfile(os.path.join(dirpath, d))
+                        return True
 
-    def open_wifi_settings(self):
-        try:
-            os.system("start ms-settings:network-wifi")
-        except:
-            pass
+        return False        
 
-    # ============================================================
-    # NIGHT MODE / FOCUS ASSIST
-    # ============================================================
-    def enable_dark_mode(self):
-        try:
-            # App + System dark mode
-            cmds = [
-                r"Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name AppsUseLightTheme -Value 0",
-                r"Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name SystemUsesLightTheme -Value 0"
-            ]
-            for c in cmds:
-                subprocess.call(["powershell.exe", "-Command", c])
-        except:
-            pass
+    def open_file(self, path: str):
+        if os.path.exists(path):
+            os.startfile(path)
 
-    def disable_dark_mode(self):
-        try:
-            cmds = [
-                r"Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name AppsUseLightTheme -Value 1",
-                r"Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name SystemUsesLightTheme -Value 1"
-            ]
-            for c in cmds:
-                subprocess.call(["powershell.exe", "-Command", c])
-        except:
-            pass
-
-    def enable_focus_assist(self):
-        try:
-            os.system("powershell.exe -Command (New-ItemProperty -Path HKCU:\\ControlPanel\\Quick* -Name FocusAssist -Value 2 -Force)")
-        except:
-            pass
-
-    def disable_focus_assist(self):
-        try:
-            os.system("powershell.exe -Command (New-ItemProperty -Path HKCU:\\ControlPanel\\Quick* -Name FocusAssist -Value 0 -Force)")
-        except:
-            pass
-
-    # ============================================================
-    # SCREENSHOTS
-    # ============================================================
-    def screenshot_to_clipboard(self):
-        try:
-            keyboard.send("printscreen")
-        except:
-            pass
-
-    def screenshot_to_file(self):
-        try:
-            filename = f"screenshot_{int(time.time())}.png"
-            img = pyautogui.screenshot()
-            img.save(filename)
-            return filename
-        except:
-            return None
-
-    # ============================================================
-    # SYSTEM CONTROL
-    # ============================================================
+    # ===================== SYSTEM =====================
     def lock_screen(self):
-        try:
-            ctypes.windll.user32.LockWorkStation()
-        except:
-            pass
+        ctypes.windll.user32.LockWorkStation()
 
     def restart_system(self):
-        try:
-            os.system("shutdown /r /t 0")
-        except:
-            pass
+        os.system("shutdown /r /t 0")
+
+    # ===================== UI / SETTINGS =====================
+    def open_task_manager(self):
+        os.system("start taskmgr")
+
+    def open_settings(self):
+        os.system("start ms-settings:")
+
+    def toggle_dark_mode(self, enable: bool):
+        val = 0 if enable else 1
+        cmds = [
+            rf"Set-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize -Name AppsUseLightTheme -Value {val}",
+            rf"Set-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize -Name SystemUsesLightTheme -Value {val}",
+        ]
+        for c in cmds:
+            subprocess.call(["powershell.exe", "-Command", c])
+
+    # ===================== SCREENSHOT =====================
+    def screenshot_clipboard(self):
+        keyboard.send("printscreen")
+
+    def screenshot_file(self):
+        name = f"screenshot_{int(time.time())}.png"
+        pyautogui.screenshot(name)
+        return name
+
+    # ===================== WEB =====================
+    def open_url(self, url: str):
+        webbrowser.open_new_tab(url)

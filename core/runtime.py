@@ -211,8 +211,9 @@ def jarvis_startup(overlay):
     from core.memory_engine import JarvisMemory
     from core.command_handler import JarvisCommandHandler
     from core.listener import JarvisListener
+    from core.context import memory
 
-    memory = JarvisMemory()
+
     handler = JarvisCommandHandler()
 
     # Link overlay to effects (preferred API: attach_overlay)
@@ -309,6 +310,10 @@ def jarvis_startup(overlay):
         overlay.set_status("Listening…")
     except:
         pass
+
+    # Boot finished — allow sleep manager to operate normally
+    sleep_manager.SYSTEM_BOOTING = False
+
 
     # Initialize LAST_INTERACTION so sleep manager has a baseline
     try:

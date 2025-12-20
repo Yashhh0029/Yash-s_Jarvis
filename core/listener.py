@@ -116,21 +116,110 @@ _WAKE_PATTERNS = [re.compile(r"\b" + re.escape(p) + r"\b", re.IGNORECASE) for p 
 
 # tuning constants
 _WAKE_TIMEOUT = 5
-_WAKE_PHRASE_TIME_LIMIT = 3
+_WAKE_PHRASE_TIME_LIMIT = 7
 
 _ACTIVE_TIMEOUT = 8
 _ACTIVE_PHRASE_TIME_LIMIT = 10
 
 _DEFAULTS = {
-    "energy_threshold": 300,
+    "energy_threshold": 450,
     "dynamic_energy_threshold": True,
-    "pause_threshold": 0.6,
-    "non_speaking_duration": 0.3,
+    "pause_threshold": 0.8,
+    "non_speaking_duration": 0.6,
 }
+
+# ---------------- Desktop Intent Resolver ----------------
+def resolve_desktop_intent(text: str):
+    t = text.lower()
+
+    if any(p in t for p in ["volume up", "increase volume", "louder"]):
+        return {"intent": "volume", "action": "up"}
+
+    if any(p in t for p in ["volume down", "lower volume", "quieter"]):
+        return {"intent": "volume", "action": "down"}
+
+    if "mute" in t:
+        return {"intent": "volume", "action": "mute"}
+
+    if any(p in t for p in ["show desktop", "take me to desktop", "minimize all"]):
+        return {"intent": "desktop", "action": "show"}
+
+    if any(p in t for p in ["close this", "close window", "close app"]):
+        return {"intent": "window", "action": "close"}
+
+    if any(p in t for p in ["switch window", "change window"]):
+        return {"intent": "window", "action": "switch"}
+
+    if any(p in t for p in ["open downloads", "open download folder"]):
+        return {"intent": "folder", "name": "downloads"}
+
+    if any(p in t for p in ["open documents", "open document folder"]):
+        return {"intent": "folder", "name": "documents"}
+
+    # ✅ STEP 1 — generic folder open (ADD THIS HERE)
+    m = re.search(r"open\s+(.*?)\s+folder", t)
+    if m:
+        return {
+            "intent": "folder_search",
+            "name": m.group(1).strip()
+        }
+
+    return None
 
 # active-mode inactivity before going back to wake-only
 ACTIVE_INACTIVITY_DEFAULT = 70
 
+# ---------------- Intent Cleaning Layer ----------------
+def clean_intent_text(text: str) -> str:
+    if not text:
+        return ""
+
+    t = text.lower().strip()
+
+    # remove wake words
+    wake_words = [
+        "jarvis",
+        "hey jarvis",
+        "oye jarvis",
+        "okay jarvis",
+        "jar",
+    ]
+    for w in wake_words:
+        t = re.sub(rf"\b{re.escape(w)}\b", "", t)
+
+    # remove command verbs
+    command_words = [
+        "search",
+        "find",
+        "look up",
+        "open",
+        "launch",
+        "play",
+        "start",
+        "type",
+        "go to",
+        "show",
+    ]
+    for c in command_words:
+        t = re.sub(rf"\b{re.escape(c)}\b", "", t)
+
+    # remove platform words
+    platforms = [
+        "on youtube",
+        "youtube",
+        "google",
+        "bing",
+        "amazon",
+        "flipkart",
+        "wikipedia",
+    ]
+    for p in platforms:
+        t = re.sub(rf"\b{re.escape(p)}\b", "", t)
+
+    # normalize whitespace
+    t = re.sub(r"\s+", " ", t)
+
+    return t.strip()
 
 class JarvisListener:
     """
@@ -142,6 +231,12 @@ class JarvisListener:
         print("🎙 Initializing Jarvis Listener (Google STT — final upgraded)...")
         self.recognizer = sr.Recognizer()
         self._init_recognizer_defaults()
+        self._last_intent = None
+        
+        # browser tab tracking (best-effort, logical index)
+        self._current_tab_index = 1
+        self._max_tabs_guess = 15  # soft limit to avoid infinite loops
+
 
         # Microphone object (single)
         try:
@@ -149,6 +244,9 @@ class JarvisListener:
         except Exception as e:
             print("⚠️ Microphone init failed:", e)
             raise
+        # short-term intent context (for follow-ups like "play it")
+        self._last_intent = None
+
 
         # locks & flags
         self._lock = threading.RLock()
@@ -239,6 +337,15 @@ class JarvisListener:
             try:
                 with sr.Microphone() as src:
                     self.recognizer.adjust_for_ambient_noise(src, duration=1)
+            except Exception:
+                pass
+
+             # ✅ ADD THIS PART (CLAMP SENSITIVITY)
+            try:
+                if self.recognizer.energy_threshold < 250:
+                   self.recognizer.energy_threshold = 250
+                elif self.recognizer.energy_threshold > 800:
+                   self.recognizer.energy_threshold = 800
             except Exception:
                 pass
 
@@ -443,103 +550,88 @@ class JarvisListener:
     # PART 3/4 — core/listener.py (continued)
 
     # -------------------------------------------------------
-    # CORE COMMAND PROCESSOR (unchanged behavior, improved flow)
+    # CORE COMMAND PROCESSOR (ROUTER ONLY)
+    # -------------------------------------------------------
+    def process_command(self, command):
+        """
+        Public API for executing commands.
+        Other modules must call this method.
+        """
+        return self._process_command(command)
+
     def _process_command(self, command):
+        """
+        Listener responsibility ONLY:
+        - normalize command
+        - explain failures
+        - route execution to command_handler
+        """
+
+        # ---------------- BASIC VALIDATION ----------------
         if not command or not command.strip():
             speak("Sorry, I didn’t catch that.", mood="neutral")
             return
 
+        command = command.lower().strip()
+
+        # ---------------- WHY / FAILURE EXPLANATION ----------------
+        if any(p in command for p in [
+            "why didn't you",
+            "why did you not",
+            "why you couldn't",
+            "what went wrong",
+            "why failed",
+        ]):
+            last = memory.get_last_action()
+
+            if not last:
+                speak("I don't recall any recent action.", mood="neutral")
+                return
+
+            if last.get("status") == "success":
+                speak("That action was completed successfully.", mood="neutral")
+                return
+
+            reason = last.get("reason", "something unexpected happened")
+            speak(f"I couldn't complete it because {reason}.", mood="neutral")
+            return
+
+        # ---------------- REMOVE WAKE WORDS ----------------
+        command = re.sub(
+            r"\b(jarvis|hey jarvis|oye jarvis|okay jarvis|jar)\b",
+            "",
+            command
+        ).strip()
+
+        command = re.sub(r"\s+", " ", command)
+
+        if not command:
+            speak("Yes?", mood="neutral")
+            return
+
+        # ---------------- SLEEP MODE GUARD ----------------
         if getattr(state, "MODE", "active") == "sleep":
             speak("Say 'Hey Jarvis' to wake me completely.", mood="neutral")
             return
 
+        # ---------------- UPDATE ACTIVITY ----------------
         try:
             state.LAST_INTERACTION = time.time()
+            self._last_active_command_ts = time.time()
         except Exception:
             pass
 
-        print(f"📡 Command: {command}")
-        cmd_lower = command.lower().strip()
-        # keep active mode alive a bit longer after every valid command
-        self._last_active_command_ts = time.time()
+        print(f"📡 Routed Command → {command}")
 
-
-        # ---------------- Search ----------------
-        if any(k in cmd_lower for k in ["search", "find", "look up", "dhund", "search kar"]):
-            try:
-                self._handle_search(cmd_lower)
-            except Exception as e:
-                print("⚠️ _handle_search error:", e)
-                traceback.print_exc()
-                speak("I couldn't search that, Yash.", mood="neutral")
-            return
-
-        # ---------------- Typing ----------------
-        if any(k in cmd_lower for k in ["type", "type this", "type that", "type message", "type kar"]):
-            text = cmd_lower
-            for p in ["type this", "type that", "type message", "type", "type kar"]:
-                text = text.replace(p, "").strip()
-            if not text:
-                speak("What should I type?", mood="neutral")
-                text = self._listen_for_short_text()
-            if text:
-                self._auto_type_text(text)
-            return
-
-               # ---------------- Browser Tabs ----------------
-        if any(
-            k in cmd_lower
-            for k in ["new tab", "open tab", "close tab", "next tab", "previous tab", "prev tab", "switch tab"]
-        ):
-            self._handle_tab_command(cmd_lower)
-            return
-
-        # ---------------- Open / Launch ----------------
-        if cmd_lower.startswith("open ") or cmd_lower.startswith("launch "):
-            self._handle_open(cmd_lower)
-            return
-
-        # ---------------- Follow-up: 'play it / first video' after a search ----------------
-        if (
-            cmd_lower.startswith("play it")
-            or cmd_lower.startswith("play this")
-            or cmd_lower.startswith("start it")
-            or "first video" in cmd_lower
-            or "1st video" in cmd_lower
-            or "first result" in cmd_lower
-        ):
-            self._handle_play_it_followup()
-            return
-
-        # ---------------- Skip YouTube Ad ----------------
-        if "skip ad" in cmd_lower or "skip ads" in cmd_lower or "skip this ad" in cmd_lower:
-            self._handle_skip_youtube_ad()
-            return
-
-        # ---------------- Media vs Music/YouTube Intent ----------------
-
-        # Volume / mute always go via media keys
-        if any(k in cmd_lower for k in ["volume up", "volume down", "mute"]):
-            self._handle_media(cmd_lower)
-            return
-
-        # Generic play/pause/resume/stop → media keys only if NO clear music/video intent
-        if any(w in cmd_lower for w in ["play", "pause", "resume", "stop"]):
-            # If no music/video keywords, treat as normal media key
-            if not any(w in cmd_lower for w in MUSIC_INTENT_KEYWORDS + ["video", "result"]):
-                self._handle_media(cmd_lower)
-                return
-            # else: fall through → Jarvis AI / command_handler will handle music/YouTube
-
-
-
-        # ---------------- Fallback → AI handler ----------------
+        # ---------------- SINGLE EXECUTION HANDOFF ----------------
         try:
             handler.process(command)
+            return
         except Exception as e:
             print("⚠️ handler error:", e)
             traceback.print_exc()
             speak("I couldn't do that, Yash.", mood="neutral")
+            return
 
     # -------------------------------------------------------
     # AUTO-TYPING
@@ -583,7 +675,7 @@ class JarvisListener:
                 return text
         return None
 
-    def _click_first_youtube_result(self, wait_seconds=2.5):
+    def _click_first_youtube_result(self, index=1, wait_seconds=2.5):
         """
         After a YouTube search, click roughly where the first result is.
         Prefer the window whose title matches the last search query.
@@ -635,12 +727,12 @@ class JarvisListener:
 
             wx, wy, ww, wh = target_window.left, target_window.top, target_window.width, target_window.height
 
-            # Approx area of first video thumbnail/title
+            # Approx area of nth video result (dynamic index-based)
             x = int(wx + ww * 0.35)
-            y = int(wy + wh * 0.35)
+            y = int(wy + wh * (0.30 + (index - 1) * 0.12))
 
             pyautogui.click(x, y)
-            speak("Playing the first result.", mood="happy")
+            speak(f"Playing result number {index}.", mood="happy")
             return True
         except Exception as e:
             print("⚠️ _click_first_youtube_result error:", e)
@@ -648,7 +740,7 @@ class JarvisListener:
             return False
 
 
-    def _handle_play_it_followup(self):
+    def _handle_play_it_followup(self,index=1):
         """
         Follow-up command: 'play it' / 'play this' / 'start it'
         → click first result on YouTube search page if available.
@@ -664,7 +756,8 @@ class JarvisListener:
                 speak("I can auto-play only from YouTube search results right now.", mood="neutral")
                 return
 
-            ok = self._click_first_youtube_result(wait_seconds=0.0)
+            ok = self._click_first_youtube_result(index=index, wait_seconds=0.0)
+
             if not ok:
                 speak("I couldn't click the result.", mood="neutral")
         except Exception as e:
@@ -677,6 +770,9 @@ class JarvisListener:
     # SEARCH HANDLER
     def _handle_search(self, command):
         try:
+            # ---- RESET SEARCH CONTEXT (CRITICAL) ----
+            self._last_search_query = None
+            self._last_intent = None
             original = command
             query = command
             for k in [
@@ -692,19 +788,10 @@ class JarvisListener:
                 "on bing",
             ]:
                 query = query.replace(k, "")
-            query = query.strip()
+            query = clean_intent_text(query)
             self._last_search_query = query.lower()
 
 
-            # PASTE THIS AT THE TOP OF THE FILE
-            PLATFORM_SEARCH_URLS: dict[str, str] = {
-                "google": "https://www.google.com/search?q={q}",
-                "youtube": "https://www.youtube.com/results?search_query={q}",
-                "amazon": "https://www.amazon.in/s?k={q}",
-                "flipkart": "https://www.flipkart.com/search?q={q}",
-                "bing": "https://www.bing.com/search?q={q}",
-                "wikipedia": "https://en.wikipedia.org/wiki/{q}",
-            }
             # detect platform
             platform = None
             for p in PLATFORM_SEARCH_URLS.keys():
@@ -717,6 +804,12 @@ class JarvisListener:
                 query = self._listen_for_short_text()
                 if not query:
                     speak("Search cancelled.", mood="neutral")
+                    memory.record_action(
+                    intent="search",
+                    command=command,
+                    status="failed",
+                    reason="user cancelled the search"
+                    )
                     return
 
             def type_fx(t):
@@ -739,12 +832,22 @@ class JarvisListener:
                         type_fx(query)
                         pyautogui.press("enter")
                         speak(f"Searching {platform} for {query}", mood="happy")
+                        memory.record_action(
+                        intent="search",
+                        command=command,
+                        status="success"
+                        )
                         return
                     except Exception:
                         pass
                 url = PLATFORM_SEARCH_URLS[platform].format(q=query.replace(" ", "+"))
                 speak(f"Opening {platform} results for {query}.", mood="happy")
                 webbrowser.open_new_tab(url)
+                memory.record_action(
+                intent="search",
+                command=command,
+                status="success"
+                )
                 return
 
             # if active browser window — search there
@@ -759,6 +862,20 @@ class JarvisListener:
                     pyautogui.press("enter")
                     speak(f"Searching YouTube for {query}", mood="happy")
                     return
+
+                    # store intent context for follow-ups
+                    self._last_intent = {
+                    "type": "youtube_search" if platform == "youtube" else "web_search",
+                    "query": query,
+                    "platform": platform or "google",
+                    "timestamp": time.time(),
+                    }
+                    memory.record_action(
+                    intent="search",
+                    command=command,
+                    status="success"
+                    )
+                    return
                 except Exception:
                     pass
 
@@ -771,6 +888,11 @@ class JarvisListener:
                     pyautogui.press("backspace")
                     type_fx(query)
                     pyautogui.press("enter")
+                    memory.record_action(
+                    intent="search",
+                    command=command,
+                    status="success"
+                    )
                     return
                 except Exception:
                     pass
@@ -784,6 +906,11 @@ class JarvisListener:
                     type_fx(query)
                     pyautogui.press("enter")
                     speak("Searching.", mood="happy")
+                    memory.record_action(
+                    intent="search",
+                    command=command,
+                    status="success"
+                    )
                     return
                 except Exception:
                     pass
@@ -791,11 +918,29 @@ class JarvisListener:
             # final fallback: open web search
             speak(f"Searching Google for {query}.", mood="happy")
             webbrowser.open_new_tab(PLATFORM_SEARCH_URLS["google"].format(q=query.replace(" ", "+")))
+            memory.record_action(
+            intent="search",
+            command=command,
+            status="success"
+            )
+
+            self._last_intent = {
+              "type": "web_search",
+               "query": query,
+               "timestamp": time.time()
+              }
 
         except Exception as e:
+            memory.record_action(
+                intent="search",
+                command=command,
+                status="failed",
+                reason=str(e)
+            )
             print("⚠️ Search Error:", e)
             traceback.print_exc()
             speak("Couldn't search that, Yash.", mood="neutral")
+
 
     # PART 4/4 — core/listener.py (final)
 
@@ -818,30 +963,73 @@ class JarvisListener:
             traceback.print_exc()
         return None
 
-    # -------------------------------------------------------
+
     # TAB CONTROL
     def _handle_tab_command(self, cmd):
         try:
             cmd = cmd.lower()
-            if "new" in cmd or "open" in cmd:
-                speak("Opening new tab.", mood="neutral")
+
+            # open new tab
+            if "new tab" in cmd or "open tab" in cmd:
                 pyautogui.hotkey("ctrl", "t")
+                self._current_tab_index += 1
+                speak("Opened a new tab.", mood="neutral")
                 return
-            if "close" in cmd:
-                speak("Closing tab.", mood="neutral")
+
+            # close current tab
+            if "close tab" in cmd or "close current tab" in cmd:
                 pyautogui.hotkey("ctrl", "w")
+                self._current_tab_index = max(1, self._current_tab_index - 1)
+                speak("Closed the current tab.", mood="neutral")
                 return
-            if "next" in cmd:
-                speak("Next tab.", mood="neutral")
+
+            # close all tabs
+            if "close all tabs" in cmd:
+                for _ in range(self._max_tabs_guess):
+                    pyautogui.hotkey("ctrl", "w")
+                    time.sleep(0.05)
+                self._current_tab_index = 1
+                speak("Closed all tabs.", mood="neutral")
+                return
+
+            # next tab
+            if "next tab" in cmd:
                 pyautogui.hotkey("ctrl", "tab")
+                self._current_tab_index += 1
+                speak("Next tab.", mood="neutral")
                 return
-            if "previous" in cmd or "prev" in cmd:
-                speak("Previous tab.", mood="neutral")
+
+            # previous tab
+            if "previous tab" in cmd or "prev tab" in cmd:
                 pyautogui.hotkey("ctrl", "shift", "tab")
+                self._current_tab_index = max(1, self._current_tab_index - 1)
+                speak("Previous tab.", mood="neutral")
                 return
+
+            # go to nth tab (1st, 2nd, 3rd...)
+            m = re.search(r"\b(\d+)(st|nd|rd|th)?\s+tab\b", cmd)
+            if m:
+                target = int(m.group(1))
+                if target < 1 or target > self._max_tabs_guess:
+                    speak("That tab number seems out of range.", mood="neutral")
+                    return
+
+                # brute-force cycle tabs until we land near target
+                for _ in range(abs(target - self._current_tab_index)):
+                    if target > self._current_tab_index:
+                        pyautogui.hotkey("ctrl", "tab")
+                    else:
+                        pyautogui.hotkey("ctrl", "shift", "tab")
+                    time.sleep(0.05)
+
+                self._current_tab_index = target
+                speak(f"Switched to tab {target}.", mood="neutral")
+                return
+
         except Exception as e:
-            print("⚠️ Tab error:", e)
-            speak("Couldn't change tabs.", mood="neutral")
+            print("⚠️ Tab control error:", e)
+            speak("I couldn't control the tabs.", mood="neutral")
+
 
     def _open_in_chrome(self, url: str) -> bool:
         """
@@ -866,78 +1054,83 @@ class JarvisListener:
     # OPEN / LAUNCH
     def _handle_open(self, command):
         try:
-            words = command.lower().replace("open ", "").replace("launch ", "").strip()
+            words = (
+                command.lower()
+                .replace("open ", "")
+                .replace("launch ", "")
+                .strip()
+            )
 
+            # OPEN YOUTUBE
             if "youtube" in words:
                 speak("Opening YouTube.", mood="happy")
-                # Try Chrome first
-                if self._open_in_chrome("https://www.youtube.com"):
-                    return
-                # Fallback to default browser
+                try:
+                    if self._open_in_chrome("https://www.youtube.com"):
+                        return
+                except Exception:
+                    pass
+
                 webbrowser.open_new_tab("https://www.youtube.com")
                 return
 
+            # OPEN GOOGLE
             if "google" in words:
                 speak("Opening Google.", mood="happy")
                 webbrowser.open_new_tab("https://www.google.com")
                 return
 
-            for app, fn in APP_COMMANDS.items():
-                if app in words:
-                    speak(f"Opening {app}.", mood="neutral")
-                    fn()
-                    return
-
+            # OPEN URL
             if "." in words:
                 if not words.startswith("http"):
                     words = "https://" + words
+
                 speak(f"Opening {words}.", mood="happy")
                 webbrowser.open_new_tab(words)
                 return
 
+            # FALLBACK SEARCH
             speak(f"Searching {words}.", mood="neutral")
-            webbrowser.open_new_tab(f"https://www.google.com/search?q={words}")
+            webbrowser.open_new_tab(
+                f"https://www.google.com/search?q={words.replace(' ', '+')}"
+            )
 
         except Exception as e:
             print("⚠️ _handle_open error:", e)
             traceback.print_exc()
             speak("Couldn't open that.", mood="neutral")
 
+
     def _handle_skip_youtube_ad(self):
         """
-        Try to click the 'Skip Ads' button on YouTube, if visible.
-        Works only on desktop YouTube in a browser window.
+        Best-effort YouTube ad skip.
+        YouTube does NOT expose a reliable skip mechanism.
+        This tries once safely and exits.
         """
         try:
             active = gw.getActiveWindow()
             if not active:
-                speak("I don't see any video window right now.", mood="neutral")
+                speak("No active window detected.", mood="neutral")
                 return
 
             title = (active.title or "").lower()
             if "youtube" not in title:
-                speak("I can only try to skip ads on YouTube for now.", mood="neutral")
+                speak("Skip ad works only on YouTube.", mood="neutral")
                 return
 
-            # small delay so the button can appear if it just showed up
-            time.sleep(0.5)
+            # Wait a bit — skip button appears after ~5 seconds
+            time.sleep(2.5)
 
-            wx, wy, ww, wh = active.left, active.top, active.width, active.height
+            # Heuristic: tab-focus + enter
+            for _ in range(6):
+                pyautogui.press("tab")
+                time.sleep(0.2)
 
-            # Approx position where the 'Skip Ads' button usually appears
-            # (bottom-right area of the video frame)
-            x = int(wx + ww * 0.88)
-            y = int(wy + wh * 0.82)
+            pyautogui.press("enter")
 
-            # try a couple of clicks in that area
-            for _ in range(2):
-                pyautogui.click(x, y)
-                time.sleep(0.15)
+            speak("If the ad was skippable, I tried skipping it.", mood="neutral")
 
-            speak("If the skip button was visible, I tried to skip the ad.", mood="happy")
         except Exception as e:
             print("⚠️ _handle_skip_youtube_ad error:", e)
-            traceback.print_exc()
             speak("I couldn't skip the ad.", mood="neutral")
 
     # -------------------------------------------------------
