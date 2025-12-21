@@ -1,6 +1,5 @@
 # PART 1/4 — core/listener.py
 # Single-mic background listener — final upgraded version (Part 1/4)
-
 import speech_recognition as sr
 import threading
 import time

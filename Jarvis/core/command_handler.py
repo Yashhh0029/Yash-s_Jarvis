@@ -1,21 +1,32 @@
+print("🔥 ACTIVE command_handler.py LOADED FROM:", __file__)
 import os
 import webbrowser
 import psutil
 import pyautogui
 import subprocess
 import time
-import traceback
 import threading
-import functools
 import random
 import datetime
 
+CHROME_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+from core.youtube_driver import get_youtube_driver
 from core.whatsapp_selenium import send_whatsapp_message
 from core.intent_parser import parse_intent
-WHATSAPP_CONFIRM = None
+from core.youtube_driver import (
+    open_youtube,
+    play_nth_video,
+    play_pause,
+    fullscreen,
+    mute,
+    forward,
+    backward,
+    scroll_up,
+    scroll_down
+)
 EXPECTING_FOLLOWUP = False
 
-THINKING_DELAY = 1     # seconds before saying "thinking"
+THINKING_DELAY = 0.5    # seconds before saying "thinking"
 THINKING_COOLDOWN = 4.0   # minimum gap between thinking messages
 _last_thinking_time = 0
 PENDING_INTENT = None
@@ -76,6 +87,22 @@ def log_command(cmd):
     with open("jarvis.log", "a", encoding="utf-8") as f:
         f.write(f"{datetime.datetime.now()} | {cmd}\n")
 
+if not any("chrome.exe" in (p.name() or "").lower() for p in psutil.process_iter()):
+    YOUTUBE_ACTIVE = False
+
+def is_youtube_command(command: str) -> bool:
+    return (
+        "youtube" in command
+        or (
+            state.LAST_APP_CONTEXT == "youtube"
+            and any(k in command for k in [
+                "play", "pause", "resume",
+                "fullscreen", "mute",
+                "forward", "backward", "rewind",
+                "scroll up", "scroll down"
+            ])
+        )
+    )
 
 class JarvisCommandHandler:
     """JARVIS Brain — handles commands, responses, emotions & memory."""
@@ -92,6 +119,13 @@ class JarvisCommandHandler:
     # ------------------------------------------------------------------
     def process(self, command):
         global PENDING_INTENT , YOUTUBE_ACTIVE
+        command = (
+                command
+                .replace("full screen", "fullscreen")
+                .replace("short screen", "fullscreen")
+                .replace("minimise", "minimize")
+                .replace("collapse", "")
+                )
 
         if not command:
             return
@@ -103,6 +137,163 @@ class JarvisCommandHandler:
         from core.context import get_last_action, set_last_action
 
         print(f"🎤 Processing Command: {command}")
+        
+        # ==================================================
+        # WHATSAPP MESSAGE — HARD INPUT CAPTURE (FIX)
+        # ==================================================
+        if (
+            PENDING_INTENT
+            and PENDING_INTENT.get("intent") == "whatsapp_message"
+            and PENDING_INTENT.get("contact") is not None
+            and PENDING_INTENT.get("message") is None
+        ):
+            # 👇 Treat this input ONLY as message text
+            PENDING_INTENT["message"] = raw_command.strip()
+
+            contact = PENDING_INTENT["contact"]
+            message = PENDING_INTENT["message"]
+
+            speak(f"Sending message to {contact}.", mood="happy")
+
+            threading.Thread(
+                target=send_whatsapp_message,
+                args=(contact, message),
+                daemon=True
+            ).start()
+
+            PENDING_INTENT = None
+            return
+
+        # ==================================================
+        # YOUTUBE — SINGLE CLEAN CONTROL BLOCK (SELENIUM ONLY)
+        # ==================================================
+        if is_youtube_command(command):
+
+            # -------------------------------
+            # OPEN YOUTUBE
+            # -------------------------------
+            if command == "open youtube":
+                speak("Opening YouTube.", mood="happy")
+                open_youtube()
+                state.LAST_APP_CONTEXT = "youtube"
+                state.LAST_YOUTUBE_SEARCH = False
+                YOUTUBE_ACTIVE = True
+                return
+
+            # -------------------------------
+            # SEARCH YOUTUBE (LETTER BY LETTER)
+            # -------------------------------
+            if (
+                command.startswith("search youtube")
+                or command.startswith("search on youtube")
+                or ("search" in command and "youtube" in command)
+                or (state.LAST_APP_CONTEXT == "youtube" and command.startswith("search"))
+            ):
+                query = (
+                    command
+                    .replace("search youtube", "")
+                    .replace("search on youtube", "")
+                    .replace("search", "")
+                    .replace("youtube", "")
+                    .strip()
+                )
+
+                if not query:
+                    speak("What should I search on YouTube?")
+                    return
+
+                speak(f"Searching YouTube for {query}.", mood="happy")
+
+                # Real typing via Selenium (letter by letter)
+                from selenium.webdriver.common.by import By
+                from selenium.webdriver.common.keys import Keys
+                driver = get_youtube_driver()
+
+                # Open YouTube ONLY if not already active
+                if state.LAST_APP_CONTEXT != "youtube":
+                    open_youtube()
+                    time.sleep(2)
+
+                box = driver.find_element(By.NAME, "search_query")
+                box.clear()
+
+                for ch in query:
+                    box.send_keys(ch)
+                    try:
+                       jarvis_fx.typing_effect()
+                    except:
+                       pass
+                    time.sleep(0.07)
+
+
+                box.send_keys(Keys.RETURN)
+
+                state.LAST_APP_CONTEXT = "youtube"
+                state.LAST_YOUTUBE_SEARCH = True
+                YOUTUBE_ACTIVE = True
+                return
+
+            # -------------------------------
+            # PLAY Nth VIDEO (ANY NUMBER)
+            # -------------------------------
+            if "play" in command and "video" in command:
+
+                number_map = {
+                    "one": 1, "first": 1, "1st": 1,
+                    "two": 2, "second": 2, "2nd": 2,
+                    "three": 3, "third": 3, "3rd": 3,
+                    "four": 4, "fourth": 4, "4th": 4,
+                    "five": 5, "fifth": 5, "5th": 5
+                }
+
+                index = None
+                for word in command.split():
+                    if word.isdigit():
+                        index = int(word)
+                        break
+                    if word in number_map:
+                        index = number_map[word]
+                        break
+
+                if not index:
+                    speak("Which video number should I play?")
+                    return
+
+                speak(f"Playing video number {index}.", mood="happy")
+                play_nth_video(index)
+                state.LAST_YOUTUBE_SEARCH = False
+                return
+
+            # -------------------------------
+            # PLAYER CONTROLS
+            # -------------------------------
+            if command in ["play", "pause", "resume"]:
+                play_pause()
+                return
+
+            if "fullscreen" in command:
+                fullscreen()
+                return
+
+            if "mute" in command:
+                mute()
+                return
+
+            if "forward" in command:
+                forward(10)
+                return
+
+            if "backward" in command or "rewind" in command:
+                backward(10)
+                return
+
+            if "scroll down" in command:
+                scroll_down()
+                return
+
+            if "scroll up" in command:
+                scroll_up()
+                return
 
         # --------------------------------------------------------------
         # GREETINGS
@@ -183,7 +374,7 @@ class JarvisCommandHandler:
         # FOLLOW-UP CONTINUATION (DO NOT RE-INTERPRET)
         # --------------------------------------------------------------
         global EXPECTING_FOLLOWUP
-        if EXPECTING_FOLLOWUP:
+        if EXPECTING_FOLLOWUP and not command.startswith(("open", "search", "play")):
             EXPECTING_FOLLOWUP = False
             threading.Thread(
                 target=self._ai_pipeline_worker,
@@ -206,48 +397,6 @@ class JarvisCommandHandler:
             ).start()
             return
 
-        # --------------------------------------------------------------
-        # YOUTUBE: PLAY Nth VIDEO AFTER SEARCH
-        # --------------------------------------------------------------
-        if (
-            state.LAST_APP_CONTEXT == "youtube"
-            and state.LAST_YOUTUBE_SEARCH
-            and "play" in command
-            and "video" in command
-        ):
-
-            number_map = {
-                "first": 1, "1st": 1, "one": 1,
-                "second": 2, "2nd": 2, "two": 2,
-                "third": 3, "3rd": 3, "three": 3,
-                "fourth": 4, "4th": 4,
-                "fifth": 5, "5th": 5
-            }
-
-            index = 1
-            for word, num in number_map.items():
-                if word in command:
-                    index = num
-                    break
-
-            speak(f"Playing video number {index}.", mood="happy")
-
-            time.sleep(3)
-            pyautogui.click(500, 400)   # force browser focus
-            time.sleep(0.2)
-            pyautogui.hotkey("home")
-            time.sleep(0.3)
-
-            pyautogui.press(
-                "tab",
-                presses=6 + index * 2,
-                interval=0.15
-            )
-            pyautogui.press("enter")
-
-            state.LAST_YOUTUBE_SEARCH = False
-            return
-        
         # --------------------------------------------------------------
         # INCOMPLETE INTENT → ASK FOLLOW-UP (HUMAN BEHAVIOR)
         # --------------------------------------------------------------
@@ -288,7 +437,8 @@ class JarvisCommandHandler:
         # BRIGHTNESS CONTROL
         if any(x in command for x in ["increase brightness", "brightness up", "bright up"]):
             try:
-                if desktop: desktop.increase_brightness()
+                if desktop:
+                    desktop.increase_brightness()
                 speak_enhanced("Increasing brightness, Yash.", mood="happy")
             except:
                 speak("Couldn't change brightness right now.", mood="alert")
@@ -320,7 +470,12 @@ class JarvisCommandHandler:
             return
 
         # MUTE
-        if "mute" in command and "unmute" not in command:
+        if (
+           "mute" in command
+           and "unmute" not in command
+           and state.LAST_APP_CONTEXT != "youtube"
+           ):
+
             try:
                 if desktop: desktop.mute()
                 speak_enhanced("Muted.", mood="neutral")
@@ -328,7 +483,7 @@ class JarvisCommandHandler:
                 speak("Failed to mute.", mood="alert")
             return
 
-        if "unmute" in command:
+        if "unmute" in command and state.LAST_APP_CONTEXT != "youtube":
             try:
                 if desktop: desktop.unmute()
                 speak_enhanced("Unmuted.", mood="happy")
@@ -609,37 +764,6 @@ class JarvisCommandHandler:
         # --------------------------------------------------------------
         # OPEN WEBSITES
         # --------------------------------------------------------------
-        if "open youtube" in command:
-            webbrowser.open("https://www.youtube.com")
-            speak("YouTube opened.", mood="happy")
-
-            state.LAST_APP_CONTEXT = "youtube"
-            state.LAST_YOUTUBE_SEARCH = False
-            YOUTUBE_ACTIVE = True
-
-            time.sleep(2)
-            pyautogui.press("tab")
-            return
-
-
- 
-        if "search youtube for" in command:
-            query = command.replace("search youtube for", "").strip()
-
-            webbrowser.open(
-                f"https://www.youtube.com/results?search_query={query.replace(' ', '+')}"
-            )
-
-            state.LAST_APP_CONTEXT = "youtube"
-            state.LAST_YOUTUBE_SEARCH = True
-            YOUTUBE_ACTIVE = True
-
-            set_last_action("youtube_search")
-
-
-            speak(f"Searching YouTube for {query}", mood="happy")
-            return
-
 
         if "open google" in command:
             speak("Opening Google.", mood="happy")
@@ -690,201 +814,6 @@ class JarvisCommandHandler:
         if "open whatsapp" in command:
             speak("Opening WhatsApp.", mood="happy")
             webbrowser.open("https://web.whatsapp.com")
-            return
-
-        # --------------------------------------------------------------
-        # BROWSER TAB CONTROLS
-        # --------------------------------------------------------------
-       
-        # --------------------------------------------------------------
-        # YOUTUBE: NEXT / PREVIOUS VIDEO
-        # --------------------------------------------------------------
-        if state.LAST_APP_CONTEXT == "youtube" and "play next video" in command:
-            pyautogui.hotkey("shift", "n")
-            speak("Playing next video.", mood="happy")
-            return
-
-        if state.LAST_APP_CONTEXT == "youtube" and (
-            "play previous video" in command or "play prev video" in command
-        ):
-            pyautogui.hotkey("shift", "p")
-            speak("Playing previous video.", mood="happy")
-            return
-        # --------------------------------------------------------------
-        # YOUTUBE: PAUSE / RESUME VIDEO
-        # --------------------------------------------------------------
-        if state.LAST_APP_CONTEXT == "youtube" and "pause video" in command:
-            pyautogui.press("k")
-            speak("Video paused.", mood="neutral")
-            return
-
-        if state.LAST_APP_CONTEXT == "youtube" and (
-            "resume video" in command or
-            ("play video" in command and not state.LAST_YOUTUBE_SEARCH)
-        ):
-            pyautogui.press("k")
-            speak("Resuming video.", mood="happy")
-            return
-        # --------------------------------------------------------------
-        # YOUTUBE: MUTE / UNMUTE VIDEO
-        # --------------------------------------------------------------
-        if state.LAST_APP_CONTEXT == "youtube" and "mute video" in command:
-            pyautogui.press("m")
-            speak("Video muted.", mood="neutral")
-            return
-
-        if state.LAST_APP_CONTEXT == "youtube" and "unmute video" in command:
-            pyautogui.press("m")
-            speak("Video unmuted.", mood="happy")
-            return
-        # --------------------------------------------------------------
-        # YOUTUBE: SEEK FORWARD / BACKWARD
-        # --------------------------------------------------------------
-        if state.LAST_APP_CONTEXT == "youtube" and "forward" in command:
-
-            if "30" in command:
-                presses = 6
-            elif "10" in command:
-                presses = 2
-            else:
-                presses = 1  # default = 5 seconds
-
-            pyautogui.press("right", presses=presses, interval=0.15)
-            speak("Forwarding video.", mood="neutral")
-            return
-
-        if state.LAST_APP_CONTEXT == "youtube" and any(x in command for x in ["backward", "back"]):
-
-            if "30" in command:
-                presses = 6
-            elif "10" in command:
-                presses = 2
-            else:
-                presses = 1  # default = 5 seconds
-
-            pyautogui.press("left", presses=presses, interval=0.15)
-            speak("Rewinding video.", mood="neutral")
-            return
-        # --------------------------------------------------------------
-        # YOUTUBE: FULLSCREEN / EXIT FULLSCREEN
-        # --------------------------------------------------------------
-        if state.LAST_APP_CONTEXT == "youtube" and (
-            "fullscreen video" in command or
-            "full screen video" in command
-        ):
-            pyautogui.press("f")
-            speak("Entering fullscreen.", mood="happy")
-            return
-
-        if state.LAST_APP_CONTEXT == "youtube" and (
-            "exit fullscreen" in command or
-            "close fullscreen" in command
-        ):
-            pyautogui.press("f")
-            speak("Exiting fullscreen.", mood="neutral")
-            return
-        # --------------------------------------------------------------
-        # BROWSER: BACK / FORWARD
-        # --------------------------------------------------------------
-        if any(x in command for x in ["go back", "browser back", "back page"]):
-            pyautogui.hotkey("alt", "left")
-            speak("Going back.", mood="neutral")
-            return
-
-        if any(x in command for x in ["go forward", "browser forward", "forward page"]):
-            pyautogui.hotkey("alt", "right")
-            speak("Going forward.", mood="neutral")
-            return
-        # --------------------------------------------------------------
-        # YOUTUBE: PLAY CURRENTLY FOCUSED VIDEO
-        # --------------------------------------------------------------
-        if state.LAST_APP_CONTEXT == "youtube" and any(
-            x in command for x in ["play this video", "play this one", "play this"]
-        ):
-            pyautogui.press("enter")
-            set_last_action(None)
-            speak("Playing this video.", mood="happy")
-            state.LAST_APP_CONTEXT = "youtube"
-            state.LAST_YOUTUBE_SEARCH = False
-            return
-
-        # --------------------------------------------------------------
-        # YOUTUBE: CORE PLAYER CONTROLS (ALWAYS AVAILABLE)
-        # --------------------------------------------------------------
-        if YOUTUBE_ACTIVE and state.LAST_APP_CONTEXT == "youtube":
-
-            # Play / Pause
-            if any(command == x or command.startswith(x) for x in ["play", "pause", "resume"]):
-                pyautogui.press("k")
-                speak("Okay.", mood="neutral")
-                return
-
-            # Fullscreen toggle
-            if any(x in command for x in ["fullscreen", "full screen"]):
-                pyautogui.press("f")
-                speak("Fullscreen.", mood="happy")
-                return
-
-            if any(x in command for x in ["exit fullscreen", "close fullscreen"]):
-                pyautogui.press("f")
-                speak("Exited fullscreen.", mood="neutral")
-                return
-
-            # Seek forward
-            if "forward" in command:
-                if "30" in command:
-                    presses = 6
-                elif "10" in command:
-                    presses = 2
-                else:
-                    presses = 1
-                pyautogui.press("right", presses=presses, interval=0.15)
-                speak("Forwarding.", mood="neutral")
-                return
-
-            # Seek backward
-            if any(x in command for x in ["backward", "rewind", "back"]):
-                if "30" in command:
-                    presses = 6
-                elif "10" in command:
-                    presses = 2
-                else:
-                    presses = 1
-                pyautogui.press("left", presses=presses, interval=0.15)
-                speak("Rewinding.", mood="neutral")
-                return
-
-        # --------------------------------------------------------------
-        # SCROLL CONTROLS (FOCUS-SAFE & RELIABLE)
-        # --------------------------------------------------------------
-        if "scroll down" in command:
-            # Force page focus (critical for YouTube / browsers)
-            pyautogui.click(500, 400)
-            time.sleep(0.1)
-
-            amount = -600
-            if any(x in command for x in ["little", "small", "slightly"]):
-                amount = -300
-            elif any(x in command for x in ["lot", "much", "fast"]):
-                amount = -1200
-
-            pyautogui.scroll(amount)
-            speak("Scrolling down.")
-            return
-
-        if "scroll up" in command:
-            # Force page focus (critical for YouTube / browsers)
-            pyautogui.click(500, 400)
-            time.sleep(0.1)
-
-            amount = 600
-            if any(x in command for x in ["little", "small", "slightly"]):
-                amount = 300
-            elif any(x in command for x in ["lot", "much", "fast"]):
-                amount = 1200
-
-            pyautogui.scroll(amount)
-            speak("Scrolling up.")
             return
 
         # --------------------------------------------------------------
@@ -1019,10 +948,13 @@ class JarvisCommandHandler:
         # --------------------------------------------------------------
         # Heuristic: “open / search / play / launch” should stay non-AI
         if (
-           not YOUTUBE_ACTIVE
-           and any(command.startswith(pref) for pref in ["open ", "launch ", "search ", "type "])
-           and "tab" not in command
-           and "window" not in command
+            not YOUTUBE_ACTIVE
+            and intent_name not in ["search", "open_app"]
+            and any(command.startswith(pref) for pref in ["open ", "launch ", "search ", "type "])
+            and "tab" not in command
+            and "window" not in command
+            and "youtube" not in command      
+            and "whatsapp" not in command
             ):
 
             try:
