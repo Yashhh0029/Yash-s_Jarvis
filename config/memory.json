@@ -1,24 +1,8 @@
 {
   "facts": {},
   "mood": "neutral",
-  "last_topic": "why",
+  "last_topic": "search",
   "emotion_history": [
-    {
-      "mood": "neutral",
-      "time": "2025-12-20 01:24:08"
-    },
-    {
-      "mood": "neutral",
-      "time": "2025-12-20 01:26:17"
-    },
-    {
-      "mood": "neutral",
-      "time": "2025-12-20 01:26:32"
-    },
-    {
-      "mood": "neutral",
-      "time": "2025-12-20 01:57:25"
-    },
     {
       "mood": "happy",
       "time": "2025-12-20 01:58:06"
@@ -50,6 +34,22 @@
     {
       "mood": "neutral",
       "time": "2025-12-20 14:53:09"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-21 03:20:49"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-21 15:22:19"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-21 15:22:33"
+    },
+    {
+      "mood": "neutral",
+      "time": "2025-12-21 17:27:33"
     }
   ]
 }
