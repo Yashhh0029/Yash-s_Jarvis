@@ -1,0 +1,40 @@
+# -------------------------
+# Virtual environment
+# -------------------------
+.venv/
+config/face_data/
+# -------------------------
+# Runtime logs
+# -------------------------
+jarvis.log
+Jarvis/jarvis.log
+
+# -------------------------
+# User memory & history
+# -------------------------
+config/nlp_history.txt
+Jarvis/config/
+
+# -------------------------
+# Browser & Selenium profiles
+# -------------------------
+jarvis_whatsapp_profile/
+Jarvis/selenium_profiles/
+
+# -------------------------
+# Python cache
+# -------------------------
+__pycache__/
+*.pyc
+
+# -------------------------
+# IDE files
+# -------------------------
+.vscode/
+.idea/
+
+# -------------------------
+# OS junk
+# -------------------------
+Thumbs.db
+.DS_Store
