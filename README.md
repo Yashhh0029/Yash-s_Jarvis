@@ -170,12 +170,22 @@ python start_jarvis.py
 
 ---
 
-## 🧠 Future Roadmap
-- Face-based emotion detection
-- Long-term memory clustering
-- Multi-user identity recognition
-- Cross-device synchronization
-- Plugin-based skill ecosystem
+## 🔮 Future Advancements
+
+JARVIS is designed as an evolving, human-centric AI system.  
+Future development focuses on deeper personalization, emotional intelligence, and autonomous decision-making.
+
+- **Identity-Aware Intelligence** – Voice-based owner recognition and command authorization  
+- **Multimodal Emotion Understanding** – Emotion detection using text, voice, and facial cues  
+- **Habit & Behavior Learning** – Long-term tracking of routines, stress, and productivity patterns  
+- **Autonomous Decision Engine** – Context-aware interventions with user-overridable control  
+- **Cognitive Memory Expansion** – Structured memory, contextual recall, and intelligent forgetting  
+- **Plugin-Based Skill System** – Extensible architecture for adding new capabilities  
+- **Explainable AI** – Transparent reasoning and self-evaluation for critical decisions  
+- **Cross-Device Continuity** – Secure memory and context synchronization across devices  
+
+> *“JARVIS is not built to replace humans,  
+but to stand beside one — consistently, intelligently, and responsibly.”*
 
 ---
 
